@@ -2,23 +2,17 @@ import fs from "fs";
 
 const FILE = "data/used_topics.json";
 
-export function loadHistory() {
-  if (!fs.existsSync(FILE)) return [];
-  return JSON.parse(fs.readFileSync(FILE, "utf8"));
-}
-
 export function isDuplicate(topic) {
-  const history = loadHistory();
-  return history.some(
-    t => t.topic.toLowerCase() === topic.toLowerCase()
-  );
+  if (!fs.existsSync(FILE)) return false;
+  const used = JSON.parse(fs.readFileSync(FILE));
+  return used.includes(topic);
 }
 
 export function saveTopic(topic) {
-  const history = loadHistory();
-  history.push({
-    topic,
-    date: new Date().toISOString()
-  });
-  fs.writeFileSync(FILE, JSON.stringify(history, null, 2));
+  let used = [];
+  if (fs.existsSync(FILE)) {
+    used = JSON.parse(fs.readFileSync(FILE));
+  }
+  used.push(topic);
+  fs.writeFileSync(FILE, JSON.stringify(used.slice(-500)));
 }
