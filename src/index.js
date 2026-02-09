@@ -1,7 +1,9 @@
 import { generateArticle } from "./generator.js";
-import { publishPost } from "./wordpress.js";
+import { publishPost, uploadImage } from "./wordpress.js";
+import { downloadImage } from "./image.js";
+import { isDuplicate, saveTopic } from "./history.js";
 
-const BATCH_SIZE = 3; // MAX 3 articole per rulare
+const BATCH_SIZE = 3;
 
 const categories = [
   { name: "politica", id: 4058, weight: 40 },
@@ -25,15 +27,23 @@ async function run() {
 
   for (let i = 1; i <= BATCH_SIZE; i++) {
     const cat = pickCategory();
-    console.log(`Generating article ${i}/${BATCH_SIZE} → ${cat.name}`);
+
+    if (isDuplicate(cat.name)) {
+      console.log("SKIP DUPLICATE:", cat.name);
+      continue;
+    }
+
+    console.log(`Generating ${i}/${BATCH_SIZE} → ${cat.name}`);
 
     const article = await generateArticle(cat.name);
-    await publishPost({
-      ...article,
-      category: cat.id
-    });
 
-    // pauză obligatorie (anti rate-limit)
+    await downloadImage(article.focus_keyword);
+    const imageId = await uploadImage();
+
+    await publishPost(article, cat.id, imageId);
+
+    saveTopic(cat.name);
+
     await new Promise(r => setTimeout(r, 15000));
   }
 
