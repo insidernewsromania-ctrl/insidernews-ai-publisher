@@ -7,7 +7,7 @@ async function run() {
     await publishPost({
       title: "TEST GitHub Actions → WordPress",
       content: "<p>Dacă vezi acest articol, integrarea funcționează.</p>",
-      category: 7
+      category: 4059
     });
 
     console.log("POST trimis cu succes");
