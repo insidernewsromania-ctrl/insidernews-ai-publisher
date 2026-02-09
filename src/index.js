@@ -16,50 +16,50 @@ function pickRandomCategory() {
 }
 
 async function run() {
-  console.log("START SCRIPT – single article mode");
+  console.log("START SCRIPT – single article");
 
   const cat = pickRandomCategory();
-  console.log(`Selected category: ${cat.name}`);
+  console.log("Category:", cat.name);
 
-  // Evitare duplicate
-  if (isDuplicate(cat.name)) {
-    console.log("Duplicate topic detected. Exiting clean.");
-    process.exit(0);
-  }
-
-  let article;
   let title;
+  let article;
 
   try {
     title = await generateDiscoverHeadline(cat.name);
+
+    // 🔴 DUPLICATE CHECK PE TITLU, NU PE CATEGORIE
+    if (isDuplicate(title)) {
+      console.log("Duplicate title detected. Skipping run.");
+      process.exit(0);
+    }
+
     article = await generateArticle(cat.name);
+    article.title = title;
   } catch (err) {
-    console.error("AI generation failed:", err.message || err);
-    // EXIT CURAT – workflow = SUCCESS
+    console.error("Generation failed:", err.message);
     process.exit(0);
   }
-
-  article.title = title;
 
   let imageId = null;
 
   try {
     await downloadImage(article.focus_keyword);
     imageId = await uploadImage();
-  } catch (err) {
-    console.warn("Image failed, publishing without image.");
+  } catch {
+    console.log("Image skipped.");
   }
 
   try {
     await publishPost(article, cat.id, imageId);
   } catch (err) {
-    console.error("Publish failed:", err.message || err);
+    console.error("Publish failed:", err.message);
     process.exit(0);
   }
 
-  saveTopic(cat.name);
+  // ✅ Salvezi TITLUL, nu categoria
+  saveTopic(title);
 
-  console.log("DONE – article published successfully");
+  console.log("DONE – article published");
   process.exit(0);
 }
 
