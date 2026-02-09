@@ -4,29 +4,32 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// curăță titlul de #, *, markdown
 function cleanTitle(title) {
   return title
-    .replace(/[#*`_]/g, "")
+    .replace(/[#*_`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
+// transformă textul AI în HTML WordPress curat
 function formatToHTML(text) {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map(l => l.trim())
+    .filter(Boolean);
 
   let html = "";
-  for (const line of lines) {
-    if (
-      line.toLowerCase().startsWith("titlu") ||
-      line.toLowerCase().startsWith("###")
-    ) {
-      continue;
-    }
 
-    if (line.length < 120 && line.endsWith(":")) {
-      html += `<h2>${line.replace(":", "")}</h2>\n`;
+  for (let line of lines) {
+    // elimină orice ** din linie
+    const cleanedLine = line.replace(/\*\*/g, "").trim();
+
+    // dacă e subtitlu (scurt + nu se termină cu punct)
+    if (cleanedLine.length < 120 && !cleanedLine.endsWith(".")) {
+      html += `<h2>${cleanedLine}</h2>\n`;
     } else {
-      html += `<p>${line}</p>\n`;
+      html += `<p>${cleanedLine}</p>\n`;
     }
   }
 
@@ -35,12 +38,14 @@ function formatToHTML(text) {
 
 export async function generateArticle(topic) {
   const prompt = `
-Scrie un articol de știri jurnalistic, obiectiv, fără emoji.
-Limba: română.
-Structură:
-- Titlu clar (o singură propoziție)
+Scrie un articol de știri jurnalistic, obiectiv, în limba română.
+
+REGULI STRICTE:
+- FĂRĂ markdown (#, **, *)
+- FĂRĂ emoji
+- Titlu clar, o singură propoziție
 - 3–5 subtitluri tematice
-- Paragrafe scurte (2–4 fraze)
+- Paragrafe scurte, clare
 
 Subiect: ${topic}
 `;
@@ -48,17 +53,16 @@ Subiect: ${topic}
   const completion = await client.chat.completions.create({
     model: "gpt-4.1-mini",
     messages: [{ role: "user", content: prompt }],
-    temperature: 0.6
+    temperature: 0.5
   });
 
   const rawText = completion.choices[0].message.content;
 
   const lines = rawText.split("\n").filter(Boolean);
-  const rawTitle = lines[0];
-  const contentBody = lines.slice(1).join("\n");
+  const rawTitle = lines.shift();
 
   return {
     title: cleanTitle(rawTitle),
-    content: formatToHTML(contentBody)
+    content: formatToHTML(lines.join("\n"))
   };
 }
