@@ -1,27 +1,20 @@
 import axios from "axios";
 
-export async function publishPost({ title, content }) {
-  const url = "https://insidernews.ro/wp-json/wp/v2/posts";
-
-  const auth = Buffer.from(
-    "ai_publisher:EfVB_Ihhh_MdvE_cRuk_pBGP_zNnG"
-  ).toString("base64");
-
+export async function publishPost({ title, content, category }) {
   const response = await axios.post(
-    url,
+    "https://insidernews.ro/?ai_webhook=publish",
     {
       title,
       content,
-      status: "draft"
+      category
     },
     {
       headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-AI-KEY": "EfVB_Ihhh_MdvE_cRuk_pBGP_zNnG"
       }
     }
   );
 
-  console.log("STATUS:", response.status);
-  console.log("ID POST:", response.data.id);
+  console.log("Webhook response:", response.data);
 }
