@@ -5,11 +5,14 @@ import { publishPost, uploadImage, isPostDuplicate } from "./wordpress.js";
 import { downloadImage } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
 import {
+  cleanTitle,
   hoursSince,
+  isSameCalendarDay,
   isRecent,
   normalizeText,
   stripHtml,
   truncate,
+  truncateAtWord,
   uniqueStrings,
   wordCount,
 } from "./utils.js";
@@ -21,14 +24,32 @@ const categories = [
   { name: "externe", id: 4060 },
 ];
 
+function parsePositiveInt(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
 const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "20");
 const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
 const MIN_CONTENT_CHARS = Number(process.env.MIN_CONTENT_CHARS || "120");
 const MIN_WORDS = Number(process.env.MIN_WORDS || "350");
 const STRICT_RECENT = process.env.STRICT_RECENT !== "false";
-const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK !== "false";
+const SAME_DAY_ONLY = process.env.SAME_DAY_ONLY !== "false";
+const NEWS_TIMEZONE = process.env.NEWS_TIMEZONE || "Europe/Bucharest";
+const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK === "true";
 const REQUIRE_IMAGE = process.env.REQUIRE_IMAGE === "true";
+const USE_DYNAMIC_IMAGE = process.env.USE_DYNAMIC_IMAGE === "true";
+const DEFAULT_FEATURED_MEDIA_ID = parsePositiveInt(
+  process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
+  0
+);
+const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
+const SEO_TITLE_MAX_CHARS = parsePositiveInt(
+  process.env.SEO_TITLE_MAX_CHARS || "60",
+  60
+);
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -44,6 +65,27 @@ const BREAKING_KEYWORDS = [
   "evacuare",
   "victime",
 ];
+
+const TITLE_END_STOPWORDS = new Set([
+  "si",
+  "sau",
+  "cu",
+  "de",
+  "din",
+  "la",
+  "in",
+  "pe",
+  "pentru",
+  "ca",
+  "iar",
+  "dar",
+  "ori",
+  "al",
+  "ale",
+  "a",
+  "un",
+  "o",
+]);
 
 function isBreakingTitle(title) {
   const normalized = normalizeText(title);
@@ -90,14 +132,26 @@ function keywordFromText(text, maxWords = 4) {
     .join(" ");
 }
 
+function hasStrongTitle(title) {
+  if (!title) return false;
+  const normalized = normalizeText(title);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 5) return false;
+  if (/[,:;/-]$/.test(title.trim())) return false;
+  const last = words[words.length - 1];
+  if (TITLE_END_STOPWORDS.has(last)) return false;
+  return true;
+}
+
 function ensureSeoFields(article, fallbackTitle = "") {
   if (!article) return article;
 
   const baseTitle = article.title || fallbackTitle || "";
+  article.title = cleanTitle(baseTitle, TITLE_MAX_CHARS);
   if (!article.focus_keyword) {
     article.focus_keyword = keywordFromText(baseTitle, 4);
   }
-  article.focus_keyword = truncate(article.focus_keyword || "", 80);
+  article.focus_keyword = truncateAtWord(article.focus_keyword || "", 80);
 
   const tags = Array.isArray(article.tags) ? article.tags : [];
   const seoTags = uniqueStrings([
@@ -109,9 +163,9 @@ function ensureSeoFields(article, fallbackTitle = "") {
   article.tags = seoTags;
 
   if (!article.seo_title) {
-    article.seo_title = baseTitle;
+    article.seo_title = article.title || baseTitle;
   }
-  article.seo_title = truncate(article.seo_title || baseTitle, 60);
+  article.seo_title = cleanTitle(article.seo_title || baseTitle, SEO_TITLE_MAX_CHARS);
 
   if (!article.meta_description) {
     const raw = stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
@@ -139,7 +193,11 @@ function hasOnlyOldYears(text) {
 }
 
 function isRecentEnough(item) {
-  if (!item?.publishedAt) return !STRICT_RECENT;
+  if (!item?.publishedAt) return !STRICT_RECENT && !SAME_DAY_ONLY;
+  if (SAME_DAY_ONLY && !isSameCalendarDay(item.publishedAt, new Date(), NEWS_TIMEZONE)) {
+    return false;
+  }
+  if (!STRICT_RECENT) return true;
   return isRecent(item.publishedAt, RECENT_HOURS);
 }
 
@@ -163,6 +221,12 @@ function prepareCandidates(items) {
 }
 
 async function maybeUploadImage(article) {
+  if (DEFAULT_FEATURED_MEDIA_ID > 0) {
+    return DEFAULT_FEATURED_MEDIA_ID;
+  }
+  if (!USE_DYNAMIC_IMAGE) {
+    return null;
+  }
   let imageId = null;
   try {
     const query = article.focus_keyword || article.title;
@@ -243,6 +307,19 @@ async function publishFromRssItem(item) {
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, item.title);
 
+  if (!hasStrongTitle(article.title)) {
+    const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
+    if (!hasStrongTitle(fallbackTitle)) {
+      console.log("Title quality too low. Skipping.");
+      return false;
+    }
+    article.title = fallbackTitle;
+    article.seo_title = cleanTitle(
+      article.seo_title || fallbackTitle,
+      SEO_TITLE_MAX_CHARS
+    );
+  }
+
   if (!hasMinimumContent(article.content_html)) {
     console.log("Sanitized content too short. Skipping.");
     return false;
@@ -266,6 +343,11 @@ async function publishFallbackArticle() {
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
+
+    if (!hasStrongTitle(article.title)) {
+      console.log("Fallback title quality too low. Trying next category.");
+      continue;
+    }
 
     if (!hasMinimumContent(article.content_html)) {
       console.log("Sanitized content too short. Skipping fallback article.");

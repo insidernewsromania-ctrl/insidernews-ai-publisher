@@ -34,6 +34,66 @@ export function truncate(text, maxLength) {
   return text.slice(0, maxLength).trimEnd();
 }
 
+export function truncateAtWord(text, maxLength) {
+  if (!text) return "";
+  const normalized = text.toString().replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  const sample = normalized.slice(0, maxLength + 1);
+  const lastSpace = sample.lastIndexOf(" ");
+  if (lastSpace >= Math.floor(maxLength * 0.6)) {
+    return sample.slice(0, lastSpace).trimEnd();
+  }
+  return normalized.slice(0, maxLength).trimEnd();
+}
+
+const TITLE_END_STOPWORDS = new Set([
+  "si",
+  "sau",
+  "cu",
+  "de",
+  "din",
+  "la",
+  "in",
+  "pe",
+  "pentru",
+  "ca",
+  "iar",
+  "dar",
+  "ori",
+  "al",
+  "ale",
+  "a",
+  "un",
+  "o",
+]);
+
+function trimTrailingStopwords(text) {
+  let current = text || "";
+  for (let i = 0; i < 3; i += 1) {
+    const words = current.split(/\s+/).filter(Boolean);
+    if (words.length < 5) return current;
+    const lastWord = words[words.length - 1];
+    const lastNorm = normalizeText(lastWord);
+    if (!TITLE_END_STOPWORDS.has(lastNorm)) return current;
+    words.pop();
+    current = words.join(" ").replace(/[-–—:;,.!? ]+$/, "").trim();
+  }
+  return current;
+}
+
+export function cleanTitle(text, maxLength = 110) {
+  if (!text) return "";
+  const normalized = text
+    .toString()
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim()
+    .replace(/^[-–—:;,.!? ]+/, "")
+    .replace(/[-–—:;,.!? ]+$/, "");
+  const truncated = truncateAtWord(normalized, maxLength);
+  return trimTrailingStopwords(truncated);
+}
+
 export function extractJson(text) {
   if (!text) return null;
   try {
@@ -78,4 +138,33 @@ export function isRecent(dateValue, maxHours) {
   const hours = hoursSince(dateValue);
   if (hours === null) return false;
   return hours <= maxHours;
+}
+
+function dayKey(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return formatter.format(date);
+  } catch {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+}
+
+export function isSameCalendarDay(
+  dateValue,
+  referenceDate = new Date(),
+  timeZone = "Europe/Bucharest"
+) {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const reference = new Date(referenceDate);
+  if (Number.isNaN(reference.getTime())) return false;
+  return dayKey(date, timeZone) === dayKey(reference, timeZone);
 }

@@ -28,9 +28,16 @@ jobs:
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ALLOW_FALLBACK: "true"
+          ALLOW_FALLBACK: "false"
+          SAME_DAY_ONLY: "true"
+          NEWS_TIMEZONE: "Europe/Bucharest"
+          STRICT_RECENT: "true"
           CANDIDATE_LIMIT: "20"
           MIN_WORDS: "350"
+          TITLE_MAX_CHARS: "110"
+          SEO_TITLE_MAX_CHARS: "60"
           AI_REWRITE_ATTEMPTS: "2"
           FALLBACK_ATTEMPTS: "3"
+          USE_DYNAMIC_IMAGE: "false"
+          WP_DEFAULT_FEATURED_MEDIA_ID: ${{ secrets.WP_DEFAULT_FEATURED_MEDIA_ID }}
           REQUIRE_IMAGE: "false"

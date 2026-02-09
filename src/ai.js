@@ -2,9 +2,12 @@
 import OpenAI from "openai";
 import { NEWS_REWRITE_PROMPT } from "./prompts.js";
 import {
+  cleanTitle,
   extractJson,
+  normalizeText,
   stripHtml,
   truncate,
+  truncateAtWord,
   uniqueStrings,
   wordCount,
 } from "./utils.js";
@@ -26,6 +29,29 @@ function parsePositiveInt(value, fallback) {
 
 const MIN_WORDS = parsePositiveInt(AI_MIN_WORDS, 350);
 const REWRITE_ATTEMPTS = Math.min(parsePositiveInt(AI_REWRITE_ATTEMPTS, 2), 4);
+const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
+const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
+
+const TITLE_END_STOPWORDS = new Set([
+  "si",
+  "sau",
+  "cu",
+  "de",
+  "din",
+  "la",
+  "in",
+  "pe",
+  "pentru",
+  "ca",
+  "iar",
+  "dar",
+  "ori",
+  "al",
+  "ale",
+  "a",
+  "un",
+  "o",
+]);
 
 function ensureHtml(text) {
   if (!text) return "";
@@ -62,6 +88,17 @@ function keywordFromText(text) {
     .join(" ");
 }
 
+function hasStrongTitle(title) {
+  if (!title) return false;
+  const normalized = normalizeText(title);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 5) return false;
+  if (/[,:;/-]$/.test(title.trim())) return false;
+  const last = words[words.length - 1];
+  if (TITLE_END_STOPWORDS.has(last)) return false;
+  return true;
+}
+
 function buildPrompt(rawContent, originalTitle, meta, attempt) {
   const base = NEWS_REWRITE_PROMPT
     .replace("{{TITLE}}", originalTitle || "")
@@ -82,17 +119,20 @@ ATENȚIE:
 }
 
 function normalizeArticle(data, originalTitle) {
+  const rawTitle = data.title || originalTitle || "";
+  const rawSeoTitle = data.seo_title || data.title || originalTitle || "";
   const article = {
-    title: (data.title || originalTitle || "").trim(),
-    seo_title: (data.seo_title || data.title || "").trim(),
+    title: cleanTitle(rawTitle, TITLE_MAX_CHARS),
+    seo_title: cleanTitle(rawSeoTitle, SEO_TITLE_MAX_CHARS),
     meta_description: (data.meta_description || "").trim(),
     focus_keyword: (data.focus_keyword || "").trim(),
     tags: normalizeTags(data.tags),
     content_html: ensureHtml(data.content_html || data.content || ""),
   };
 
-  article.title = truncate(article.title, 80);
-  article.seo_title = truncate(article.seo_title || article.title, 60);
+  if (!article.seo_title) {
+    article.seo_title = cleanTitle(article.title, SEO_TITLE_MAX_CHARS);
+  }
 
   if (!article.focus_keyword && article.tags.length > 0) {
     article.focus_keyword = article.tags[0];
@@ -100,7 +140,7 @@ function normalizeArticle(data, originalTitle) {
   if (!article.focus_keyword) {
     article.focus_keyword = keywordFromText(article.title);
   }
-  article.focus_keyword = truncate(article.focus_keyword, 80);
+  article.focus_keyword = truncateAtWord(article.focus_keyword, 80);
 
   const fallbackTag = keywordFromText(article.title);
   article.tags = uniqueStrings([
@@ -149,6 +189,23 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
       if (!article.title || !article.content_html) {
         console.log(`AI SKIP: articol incomplet (attempt ${attempt}/${REWRITE_ATTEMPTS})`);
         continue;
+      }
+
+      if (!hasStrongTitle(article.title)) {
+        const fallbackTitle = cleanTitle(originalTitle, TITLE_MAX_CHARS);
+        if (hasStrongTitle(fallbackTitle)) {
+          article.title = fallbackTitle;
+          article.seo_title = cleanTitle(
+            article.seo_title || fallbackTitle,
+            SEO_TITLE_MAX_CHARS
+          );
+        } else if (attempt < REWRITE_ATTEMPTS) {
+          console.log("AI RETRY: titlu slab sau incomplet");
+          continue;
+        } else {
+          console.log("AI SKIP: titlu slab sau incomplet");
+          continue;
+        }
       }
 
       const words = wordCount(article.content_html);
