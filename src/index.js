@@ -1,35 +1,43 @@
 import { generateArticle } from "./generator.js";
 import { publishPost } from "./wordpress.js";
 
-const CATEGORIES = [
-  { name: "Politică", id: 4058 },
-  { name: "Social", id: 4063 },
-  { name: "Economie", id: 4064 },
-  { name: "Externe", id: 4060 },
-  { name: "Ultimele știri", id: 7 }
+const BATCH_SIZE = 3; // MAX 3 articole per rulare
+
+const categories = [
+  { name: "politica", id: 4058, weight: 40 },
+  { name: "social", id: 4063, weight: 25 },
+  { name: "economie", id: 4064, weight: 15 },
+  { name: "externe", id: 4060, weight: 20 }
 ];
+
+function pickCategory() {
+  const total = categories.reduce((s, c) => s + c.weight, 0);
+  let rand = Math.random() * total;
+
+  for (const c of categories) {
+    if (rand < c.weight) return c;
+    rand -= c.weight;
+  }
+}
 
 async function run() {
   console.log("START SCRIPT");
 
-  let count = 0;
+  for (let i = 1; i <= BATCH_SIZE; i++) {
+    const cat = pickCategory();
+    console.log(`Generating article ${i}/${BATCH_SIZE} → ${cat.name}`);
 
-  for (const cat of CATEGORIES) {
-    for (let i = 0; i < 6; i++) {
-      count++;
-      console.log(`Generating article ${count}/30 → ${cat.name}`);
+    const article = await generateArticle(cat.name);
+    await publishPost({
+      ...article,
+      category: cat.id
+    });
 
-      const article = await generateArticle(cat.name);
-      await publishPost({
-        title: article.title,
-        content: article.content,
-        category: cat.id
-      });
-
-      // protecție rate limit
-      await new Promise(r => setTimeout(r, 3000));
-    }
+    // pauză obligatorie (anti rate-limit)
+    await new Promise(r => setTimeout(r, 15000));
   }
+
+  console.log("DONE");
 }
 
 run();
