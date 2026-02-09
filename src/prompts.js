@@ -15,6 +15,7 @@ REGULI OBLIGATORII:
 - Include subtitluri H2 relevante.
 - Primul paragraf trebuie să rezume esența știrii (lead).
 - Limba română corectă, diacritice.
+- Nu inventa fapte sau cifre care nu apar în știrea originală.
 
 STRUCTURĂ:
 - Titlu (H1) clar, informativ, fără clickbait fals.
@@ -25,10 +26,29 @@ STRUCTURĂ:
 SEO:
 - Titlu SEO max 60 caractere (derivat din H1).
 - Meta descriere max 160 caractere.
-- 2–5 taguri relevante (virgulă).
+- 2–5 taguri relevante.
 - Un focus keyword relevant pentru subiect.
 
-ȘTIRE DE RESCRIS:
+Returnează STRICT JSON (fără markdown):
+{
+  "title": "",
+  "seo_title": "",
+  "meta_description": "",
+  "focus_keyword": "",
+  "tags": ["", ""],
+  "content_html": ""
+}
+
+REGULI OUTPUT:
+- title: max 80 caractere.
+- seo_title: max 60 caractere.
+- meta_description: max 160 caractere.
+- tags: 2–5 taguri, fără #.
+- content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
+
+ȘTIRE ORIGINALĂ:
+Titlu: {{TITLE}}
+Conținut:
 """
 {{CONTENT}}
 """

@@ -20,6 +20,13 @@ export const ROMANIA_SOURCES = [
     maxPerRun: 3,
   },
   {
+    name: "Google News România – Breaking",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=%22ultima%20ora%22%20OR%20breaking%20OR%20alerta%20Romania&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7, // Ultimele știri
+    maxPerRun: 3,
+  },
+  {
     name: "Google News România – Politică",
     type: "rss",
     url: "https://news.google.com/rss/search?q=politica+Romania&hl=ro&gl=RO&ceid=RO:ro",

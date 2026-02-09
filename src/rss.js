@@ -27,6 +27,7 @@ async function fetchSource(source) {
       link: item.link,
       categoryId: source.categoryId,
       source: source.name,
+      publishedAt: item.isoDate || item.pubDate || item.published || null,
     }));
   } catch (err) {
     console.error("RSS ERROR:", source.name, err.message);
@@ -36,7 +37,7 @@ async function fetchSource(source) {
 
 function dedupe(items) {
   return items.filter(item => {
-    const h = hash(item.title.toLowerCase());
+    const h = hash(`${item.title}`.toLowerCase() + "|" + `${item.link}`);
     if (seen.has(h)) return false;
     seen.add(h);
     return true;
