@@ -85,11 +85,11 @@ function extractYears(text) {
   );
 }
 
-function hasOldYear(text) {
+function hasOnlyOldYears(text) {
   const years = extractYears(text);
   if (years.length === 0) return false;
   const currentYear = new Date().getFullYear();
-  return years.some(year => year < currentYear);
+  return years.every(year => year < currentYear);
 }
 
 function isRecentEnough(item) {
@@ -101,7 +101,8 @@ function isValidCandidate(item) {
   if (!item?.title) return false;
   if (!isRecentEnough(item)) return false;
   const combined = `${item.title} ${item.content || ""}`;
-  if (hasOldYear(combined)) return false;
+  // Heuristica pe an e utilă doar când feed-ul nu oferă o dată clară.
+  if (!item?.publishedAt && hasOnlyOldYears(combined)) return false;
   return true;
 }
 
