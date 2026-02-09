@@ -46,6 +46,11 @@ REGULI OUTPUT:
 - tags: 2–5 taguri, fără #.
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 
+CONTEXT (NU MENȚIONA SURSA ÎN ARTICOL):
+Data publicării: {{PUBLISHED_AT}}
+Sursa: {{SOURCE}}
+Link: {{LINK}}
+
 ȘTIRE ORIGINALĂ:
 Titlu: {{TITLE}}
 Conținut:

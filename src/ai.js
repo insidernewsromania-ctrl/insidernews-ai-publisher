@@ -39,11 +39,14 @@ function normalizeTags(tags) {
   return [];
 }
 
-export async function rewriteNews(rawContent, originalTitle) {
+export async function rewriteNews(rawContent, originalTitle, meta = {}) {
   try {
     const prompt = NEWS_REWRITE_PROMPT
       .replace("{{TITLE}}", originalTitle || "")
-      .replace("{{CONTENT}}", rawContent);
+      .replace("{{CONTENT}}", rawContent)
+      .replace("{{PUBLISHED_AT}}", meta.publishedAt || "")
+      .replace("{{SOURCE}}", meta.source || "")
+      .replace("{{LINK}}", meta.link || "");
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",

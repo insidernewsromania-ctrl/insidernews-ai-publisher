@@ -15,8 +15,12 @@ const categories = [
 
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
 const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "12");
-const RECENT_HOURS = Number(process.env.RECENT_HOURS || "36");
+const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
 const MIN_CONTENT_CHARS = Number(process.env.MIN_CONTENT_CHARS || "120");
+const MIN_WORDS = Number(process.env.MIN_WORDS || "350");
+const STRICT_RECENT = process.env.STRICT_RECENT !== "false";
+const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK === "true";
+const REQUIRE_IMAGE = process.env.REQUIRE_IMAGE !== "false";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -70,29 +74,53 @@ function sanitizeContent(html) {
 }
 
 function hasMinimumContent(html) {
-  return wordCount(html) >= 200;
+  return wordCount(html) >= MIN_WORDS;
+}
+
+function extractYears(text) {
+  const matches = (text || "").match(/\b(20\d{2})\b/g);
+  if (!matches) return [];
+  return [...new Set(matches.map(year => Number(year)))].filter(
+    year => !Number.isNaN(year)
+  );
+}
+
+function hasOldYear(text) {
+  const years = extractYears(text);
+  if (years.length === 0) return false;
+  const currentYear = new Date().getFullYear();
+  return years.some(year => year < currentYear);
+}
+
+function isRecentEnough(item) {
+  if (!item?.publishedAt) return !STRICT_RECENT;
+  return isRecent(item.publishedAt, RECENT_HOURS);
+}
+
+function isValidCandidate(item) {
+  if (!item?.title) return false;
+  if (!isRecentEnough(item)) return false;
+  const combined = `${item.title} ${item.content || ""}`;
+  if (hasOldYear(combined)) return false;
+  return true;
 }
 
 function prepareCandidates(items) {
   const withContent = items.filter(item => {
     const size = (item.content || "").length;
-    return item.title && (size >= MIN_CONTENT_CHARS || item.title.length > 20);
+    const hasEnough = size >= MIN_CONTENT_CHARS || item.title.length > 20;
+    return hasEnough && isValidCandidate(item);
   });
 
-  const recent = withContent.filter(item =>
-    isRecent(item.publishedAt, RECENT_HOURS)
-  );
-
-  const pool = recent.length > 0 ? recent : withContent;
-
-  return pool.sort((a, b) => scoreItem(b) - scoreItem(a));
+  return withContent.sort((a, b) => scoreItem(b) - scoreItem(a));
 }
 
 async function maybeUploadImage(article) {
   let imageId = null;
   try {
-    if (article.focus_keyword) {
-      await downloadImage(article.focus_keyword);
+    const query = article.focus_keyword || article.title;
+    if (query) {
+      await downloadImage(article.focus_keyword, article.title);
       imageId = await uploadImage();
     }
   } catch (err) {
@@ -129,6 +157,11 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
 
   const imageId = await maybeUploadImage(article);
 
+  if (REQUIRE_IMAGE && !imageId) {
+    console.log("Image required but missing. Skipping.");
+    return false;
+  }
+
   try {
     await publishPost(article, categoryId, imageId);
   } catch (err) {
@@ -148,7 +181,11 @@ async function publishFromRssItem(item) {
   }
 
   const raw = [item.title, item.content].filter(Boolean).join("\n\n");
-  const article = await rewriteNews(raw, item.title);
+  const article = await rewriteNews(raw, item.title, {
+    publishedAt: item.publishedAt,
+    source: item.source,
+    link: item.link,
+  });
 
   if (!article) return false;
 
@@ -175,6 +212,7 @@ async function publishFromRssItem(item) {
 }
 
 async function publishFallbackArticle() {
+  if (!ALLOW_FALLBACK) return false;
   const cat = pickRandomCategory();
   console.log("Fallback category:", cat.name);
   const article = await generateArticle(cat.name);
@@ -210,6 +248,7 @@ async function run() {
   console.log("Collected items:", items.length);
 
   const candidates = prepareCandidates(items);
+  console.log("Valid candidates:", candidates.length);
   let published = 0;
 
   for (const item of candidates) {
