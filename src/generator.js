@@ -8,17 +8,16 @@ export async function generateArticle(topic) {
   const prompt = `
 Scrie un articol de presă în limba română.
 
-REGULI OBLIGATORII:
-- OUTPUT DOAR JSON
-- Conținut HTML valid WordPress
-- FĂRĂ Markdown (#, ##, **, *)
-- FĂRĂ emoji
+REGULI:
+- NU include titlu
+- Conținut HTML WordPress valid
+- FĂRĂ Markdown
 - Stil jurnalistic profesionist
 - 600–900 cuvinte
 - Structură:
-  <h1>Titlu</h1>
-  <p>Paragrafe</p>
+  <p>Introducere</p>
   <h2>Subtitluri</h2>
+  <p>Paragrafe</p>
 
 SEO:
 - meta_title max 60 caractere
@@ -26,9 +25,8 @@ SEO:
 - focus_keyword clar
 - 5–8 tag-uri SEO (fără diacritice)
 
-FORMAT RĂSPUNS:
+FORMAT RĂSPUNS JSON:
 {
-  "title": "",
   "content_html": "",
   "meta_title": "",
   "meta_description": "",
