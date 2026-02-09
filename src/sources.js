@@ -6,11 +6,11 @@ export const DAILY_TARGET = {
 };
 
 export const MIX = {
-  romania: 0.8,
-  externe: 0.2,
+  romania: 1.0,
+  externe: 0.0,
 };
 
-// ===== ROMÂNIA (80%) =====
+// ===== ROMÂNIA (100%) =====
 export const ROMANIA_SOURCES = [
   {
     name: "Google News România – Ultimele știri",
@@ -25,6 +25,62 @@ export const ROMANIA_SOURCES = [
     url: "https://news.google.com/rss/search?q=%22ultima%20ora%22%20OR%20breaking%20OR%20alerta%20Romania&hl=ro&gl=RO&ceid=RO:ro",
     categoryId: 7, // Ultimele știri
     maxPerRun: 3,
+  },
+  {
+    name: "Google News – Agerpres",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Aagerpres.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – HotNews",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Ahotnews.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Digi24",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Adigi24.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – ProTV",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Astirileprotv.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – G4Media",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Ag4media.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Economica",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Aeconomica.net&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4064,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – ZF",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Azf.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4064,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Mediafax",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Amediafax.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 7,
+    maxPerRun: 2,
   },
   {
     name: "Google News România – Politică",
@@ -49,7 +105,7 @@ export const ROMANIA_SOURCES = [
   },
 ];
 
-// ===== EXTERNE (20%) =====
+// ===== EXTERNE (0%) =====
 export const EXTERNE_SOURCES = [
   {
     name: "Google News – Europa",
