@@ -4,65 +4,46 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// curăță titlul de #, *, markdown
-function cleanTitle(title) {
-  return title
-    .replace(/[#*_`]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// transformă textul AI în HTML WordPress curat
-function formatToHTML(text) {
-  const lines = text
-    .split("\n")
-    .map(l => l.trim())
-    .filter(Boolean);
-
-  let html = "";
-
-  for (let line of lines) {
-    // elimină orice ** din linie
-    const cleanedLine = line.replace(/\*\*/g, "").trim();
-
-    // dacă e subtitlu (scurt + nu se termină cu punct)
-    if (cleanedLine.length < 120 && !cleanedLine.endsWith(".")) {
-      html += `<h2>${cleanedLine}</h2>\n`;
-    } else {
-      html += `<p>${cleanedLine}</p>\n`;
-    }
-  }
-
-  return html;
-}
-
 export async function generateArticle(topic) {
   const prompt = `
-Scrie un articol de știri jurnalistic, obiectiv, în limba română.
+Scrie un articol de presă în limba română, stil jurnalistic profesionist.
 
-REGULI STRICTE:
-- FĂRĂ markdown (#, **, *)
+REGULI OBLIGATORII:
+- OUTPUT DOAR HTML VALID WordPress
+- FĂRĂ Markdown (#, ##, **, *)
 - FĂRĂ emoji
-- Titlu clar, o singură propoziție
-- 3–5 subtitluri tematice
-- Paragrafe scurte, clare
+- FĂRĂ semne speciale în titlu
+- Structură:
+  <h1>Titlu</h1>
+  <p>Paragrafe</p>
+  <h2>Subtitluri</h2>
+- 600–900 cuvinte
+- Ton neutru, informativ
 
-Subiect: ${topic}
+SEO:
+- Creează și:
+  - meta_title (max 60 caractere)
+  - meta_description (max 160 caractere)
+  - focus_keyword (1 expresie clară)
+
+Răspuns STRICT în format JSON:
+{
+  "title": "",
+  "content_html": "",
+  "meta_title": "",
+  "meta_description": "",
+  "focus_keyword": ""
+}
+
+TOPIC: ${topic}
 `;
 
-  const completion = await client.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.5
+  const res = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.6,
+    max_tokens: 1400,
+    messages: [{ role: "user", content: prompt }]
   });
 
-  const rawText = completion.choices[0].message.content;
-
-  const lines = rawText.split("\n").filter(Boolean);
-  const rawTitle = lines.shift();
-
-  return {
-    title: cleanTitle(rawTitle),
-    content: formatToHTML(lines.join("\n"))
-  };
+  return JSON.parse(res.choices[0].message.content);
 }
