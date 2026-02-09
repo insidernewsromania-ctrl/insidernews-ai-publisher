@@ -4,7 +4,7 @@ import { generateArticle } from "./generator.js";
 import { publishPost, uploadImage, isPostDuplicate } from "./wordpress.js";
 import { downloadImage } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
-import { hoursSince, isRecent, normalizeText } from "./utils.js";
+import { hoursSince, isRecent, normalizeText, wordCount } from "./utils.js";
 
 const categories = [
   { name: "politica", id: 4058 },
@@ -58,7 +58,19 @@ function scoreItem(item) {
 
 function stripH1(html) {
   if (!html) return "";
-  return html.replace(/<h1[^>]*>[\s\S]*?<\/h1>/gi, "").trim();
+  const removed = html.replace(/<h1[^>]*>[\s\S]*?<\/h1>/gi, "").trim();
+  if (wordCount(removed) > 20) return removed;
+  return html.trim();
+}
+
+function sanitizeContent(html) {
+  const cleaned = stripH1(html);
+  if (wordCount(cleaned) === 0) return html || "";
+  return cleaned;
+}
+
+function hasMinimumContent(html) {
+  return wordCount(html) >= 200;
 }
 
 function prepareCandidates(items) {
@@ -92,6 +104,11 @@ async function maybeUploadImage(article) {
 async function tryPublishArticle(article, categoryId, sourceUrl) {
   if (isDuplicate({ title: article.title, url: sourceUrl })) {
     console.log("Duplicate detected in history. Skipping.");
+    return false;
+  }
+
+  if (!article.content_html || !hasMinimumContent(article.content_html)) {
+    console.log("Content too short or missing. Skipping.");
     return false;
   }
 
@@ -135,7 +152,12 @@ async function publishFromRssItem(item) {
 
   if (!article) return false;
 
-  article.content_html = stripH1(article.content_html);
+  article.content_html = sanitizeContent(article.content_html);
+
+  if (!hasMinimumContent(article.content_html)) {
+    console.log("Sanitized content too short. Skipping.");
+    return false;
+  }
 
   if (!article.focus_keyword) {
     article.focus_keyword = item.title
@@ -158,7 +180,12 @@ async function publishFallbackArticle() {
   const article = await generateArticle(cat.name);
   if (!article) return false;
 
-  article.content_html = stripH1(article.content_html);
+  article.content_html = sanitizeContent(article.content_html);
+
+  if (!hasMinimumContent(article.content_html)) {
+    console.log("Sanitized content too short. Skipping.");
+    return false;
+  }
 
   if (!article.focus_keyword) {
     article.focus_keyword = article.title
