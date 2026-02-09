@@ -1,6 +1,12 @@
 import axios from "axios";
 import fs from "fs";
-import { normalizeText, slugify, uniqueStrings } from "./utils.js";
+import {
+  normalizeText,
+  slugify,
+  stripHtml,
+  truncate,
+  uniqueStrings,
+} from "./utils.js";
 
 const auth = {
   username: process.env.WP_USER,
@@ -16,18 +22,35 @@ function wpApi(path) {
   return `${wpBaseUrl()}/wp-json/wp/v2${path}`;
 }
 
-export async function uploadImage() {
+export async function uploadImage(options = {}) {
   const img = fs.readFileSync("image.jpg");
+  const fileBase = slugify(options.title || options.altText || "image") || "image";
+  const fileName = `${fileBase}.jpg`;
 
   const res = await axios.post(wpApi("/media"), img, {
     auth,
     headers: {
       "Content-Type": "image/jpeg",
-      "Content-Disposition": "attachment; filename=image.jpg",
+      "Content-Disposition": `attachment; filename=${fileName}`,
     },
   });
 
-  return res.data.id;
+  const mediaId = res.data.id;
+  const payload = {};
+
+  if (options.altText) payload.alt_text = truncate(options.altText, 120);
+  if (options.title) payload.title = truncate(options.title, 120);
+  if (options.caption) payload.caption = truncate(options.caption, 300);
+
+  if (Object.keys(payload).length > 0) {
+    try {
+      await axios.post(wpApi(`/media/${mediaId}`), payload, { auth });
+    } catch (err) {
+      console.warn("MEDIA META ERROR:", err.message);
+    }
+  }
+
+  return mediaId;
 }
 
 async function findPostBySlug(slug) {
@@ -126,13 +149,20 @@ export async function publishPost(article, categoryId, imageId) {
 
   if (categoryId) payload.categories = [categoryId];
   if (imageId) payload.featured_media = imageId;
-  if (article.meta_description) payload.excerpt = article.meta_description;
+  const excerptSource =
+    article.meta_description ||
+    stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
+  if (excerptSource) payload.excerpt = truncate(excerptSource, 160);
 
   const slug = slugify(article.seo_title || article.title);
   if (slug) payload.slug = slug;
 
-  if (article.tags && article.tags.length > 0) {
-    const tagIds = await resolveTagIds(article.tags);
+  const seoTags = uniqueStrings([
+    ...(article.tags || []),
+    article.focus_keyword,
+  ]).slice(0, 5);
+  if (seoTags.length > 0) {
+    const tagIds = await resolveTagIds(seoTags);
     if (tagIds.length > 0) payload.tags = tagIds;
   }
 

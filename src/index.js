@@ -4,7 +4,15 @@ import { generateArticle } from "./generator.js";
 import { publishPost, uploadImage, isPostDuplicate } from "./wordpress.js";
 import { downloadImage } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
-import { hoursSince, isRecent, normalizeText, wordCount } from "./utils.js";
+import {
+  hoursSince,
+  isRecent,
+  normalizeText,
+  stripHtml,
+  truncate,
+  uniqueStrings,
+  wordCount,
+} from "./utils.js";
 
 const categories = [
   { name: "politica", id: 4058 },
@@ -14,13 +22,13 @@ const categories = [
 ];
 
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
-const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "12");
+const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "20");
 const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
 const MIN_CONTENT_CHARS = Number(process.env.MIN_CONTENT_CHARS || "120");
 const MIN_WORDS = Number(process.env.MIN_WORDS || "350");
 const STRICT_RECENT = process.env.STRICT_RECENT !== "false";
-const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK === "true";
-const REQUIRE_IMAGE = process.env.REQUIRE_IMAGE !== "false";
+const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK !== "false";
+const REQUIRE_IMAGE = process.env.REQUIRE_IMAGE === "true";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -36,10 +44,6 @@ const BREAKING_KEYWORDS = [
   "evacuare",
   "victime",
 ];
-
-function pickRandomCategory() {
-  return categories[Math.floor(Math.random() * categories.length)];
-}
 
 function isBreakingTitle(title) {
   const normalized = normalizeText(title);
@@ -75,6 +79,48 @@ function sanitizeContent(html) {
 
 function hasMinimumContent(html) {
   return wordCount(html) >= MIN_WORDS;
+}
+
+function keywordFromText(text, maxWords = 4) {
+  return (text || "")
+    .split(/\s+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .slice(0, maxWords)
+    .join(" ");
+}
+
+function ensureSeoFields(article, fallbackTitle = "") {
+  if (!article) return article;
+
+  const baseTitle = article.title || fallbackTitle || "";
+  if (!article.focus_keyword) {
+    article.focus_keyword = keywordFromText(baseTitle, 4);
+  }
+  article.focus_keyword = truncate(article.focus_keyword || "", 80);
+
+  const tags = Array.isArray(article.tags) ? article.tags : [];
+  const seoTags = uniqueStrings([
+    ...tags,
+    article.focus_keyword,
+    keywordFromText(baseTitle, 3),
+    keywordFromText(baseTitle, 2),
+  ]).slice(0, 5);
+  article.tags = seoTags;
+
+  if (!article.seo_title) {
+    article.seo_title = baseTitle;
+  }
+  article.seo_title = truncate(article.seo_title || baseTitle, 60);
+
+  if (!article.meta_description) {
+    const raw = stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
+    article.meta_description = truncate(raw, 160);
+  } else {
+    article.meta_description = truncate(article.meta_description, 160);
+  }
+
+  return article;
 }
 
 function extractYears(text) {
@@ -122,7 +168,11 @@ async function maybeUploadImage(article) {
     const query = article.focus_keyword || article.title;
     if (query) {
       await downloadImage(article.focus_keyword, article.title);
-      imageId = await uploadImage();
+      imageId = await uploadImage({
+        title: article.seo_title || article.title,
+        altText: article.title || article.focus_keyword,
+        caption: article.meta_description || "",
+      });
     }
   } catch (err) {
     console.log("Image skipped:", err.message);
@@ -191,22 +241,11 @@ async function publishFromRssItem(item) {
   if (!article) return false;
 
   article.content_html = sanitizeContent(article.content_html);
+  ensureSeoFields(article, item.title);
 
   if (!hasMinimumContent(article.content_html)) {
     console.log("Sanitized content too short. Skipping.");
     return false;
-  }
-
-  if (!article.focus_keyword) {
-    article.focus_keyword = item.title
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(" ");
-  }
-
-  if (!Array.isArray(article.tags) || article.tags.length === 0) {
-    const fallbackTag = item.title.split(/\s+/).slice(0, 4).join(" ");
-    article.tags = fallbackTag ? [fallbackTag] : [];
   }
 
   return tryPublishArticle(article, item.categoryId, item.link);
@@ -214,26 +253,30 @@ async function publishFromRssItem(item) {
 
 async function publishFallbackArticle() {
   if (!ALLOW_FALLBACK) return false;
-  const cat = pickRandomCategory();
-  console.log("Fallback category:", cat.name);
-  const article = await generateArticle(cat.name);
-  if (!article) return false;
-
-  article.content_html = sanitizeContent(article.content_html);
-
-  if (!hasMinimumContent(article.content_html)) {
-    console.log("Sanitized content too short. Skipping.");
-    return false;
+  const shuffled = [...categories];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  if (!article.focus_keyword) {
-    article.focus_keyword = article.title
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(" ");
+  for (const cat of shuffled) {
+    console.log("Fallback category:", cat.name);
+    const article = await generateArticle(cat.name);
+    if (!article) continue;
+
+    article.content_html = sanitizeContent(article.content_html);
+    ensureSeoFields(article, article.title);
+
+    if (!hasMinimumContent(article.content_html)) {
+      console.log("Sanitized content too short. Skipping fallback article.");
+      continue;
+    }
+
+    const success = await tryPublishArticle(article, cat.id, null);
+    if (success) return true;
   }
 
-  return tryPublishArticle(article, cat.id, null);
+  return false;
 }
 
 async function run() {
@@ -244,7 +287,7 @@ async function run() {
     : 1;
 
   const items = await collectNews(
-    Math.max(CANDIDATE_LIMIT, postsTarget * 4)
+    Math.max(CANDIDATE_LIMIT, postsTarget * 6)
   );
   console.log("Collected items:", items.length);
 

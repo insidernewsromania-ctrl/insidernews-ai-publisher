@@ -8,7 +8,7 @@ REGULI OBLIGATORII:
 - Text ORIGINAL, fără plagiat.
 - Fără citarea sursei sau a altor publicații.
 - Fără formulări de tip „potrivit surselor”.
-- Minim 450 de cuvinte.
+- Minim {{MIN_WORDS}} de cuvinte.
 - Fără secțiune intitulată „Concluzie”.
 - Ton profesionist, informativ, fără senzaționalism.
 - Paragrafe scurte (2–3 propoziții).
@@ -28,6 +28,7 @@ SEO:
 - Meta descriere max 160 caractere.
 - 2–5 taguri relevante.
 - Un focus keyword relevant pentru subiect.
+- Include focus keyword natural în lead și într-un subtitlu H2.
 
 Returnează STRICT JSON (fără markdown):
 {
