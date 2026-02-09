@@ -1,0 +1,9 @@
+{
+  "name": "insidernews-ai-publisher",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.2"
+  }
+}
