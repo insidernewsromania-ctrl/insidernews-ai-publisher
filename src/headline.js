@@ -1,35 +1,38 @@
 import OpenAI from "openai";
 
-const client = new OpenAI({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-export async function generateDiscoverHeadline(topic) {
+function todayRO() {
+  return new Date().toLocaleDateString("ro-RO", {
+    day: "2-digit",
+    month: "2-digit"
+  });
+}
+
+export async function generateDiscoverHeadline(category) {
+  const today = todayRO();
+
   const prompt = `
-Generează UN titlu de știre pentru Google Discover.
+Generează un TITLU de știre despre un EVENIMENT produs sau anunțat ASTĂZI (${today}).
 
 REGULI:
-- max 70 caractere
-- fără emoji
-- fără # * !
-- fără clickbait
-- factual
-- profesionist
-- stil presă
+- Eveniment actual, nu analiză
+- Poate face referire la ani anteriori DOAR dacă este context
+- Fără simboluri (#, *, **)
+- Stil: presă online din România
 
-SUBIECT: ${topic}
+Categoria: ${category}
 
-Răspunde DOAR cu titlul.
+Returnează DOAR titlul.
 `;
 
-  const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.4,
-    max_tokens: 60,
+  const response = await openai.chat.completions.create({
+    model: "gpt-4.1-mini",
+    temperature: 0.3,
     messages: [{ role: "user", content: prompt }]
   });
 
-  return res.choices[0].message.content
-    .replace(/[#*_!`]/g, "")
-    .trim();
+  return response.choices[0].message.content.trim();
 }
