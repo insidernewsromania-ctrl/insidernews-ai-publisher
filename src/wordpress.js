@@ -1,45 +1,40 @@
 import axios from "axios";
 import fs from "fs";
 
+const auth = {
+  username: process.env.WP_USER,
+  password: process.env.WP_APP_PASSWORD
+};
+
 export async function uploadImage() {
+  const img = fs.readFileSync("image.jpg");
+
   const res = await axios.post(
     `${process.env.WP_URL}/wp-json/wp/v2/media`,
-    fs.createReadStream("temp.jpg"),
+    img,
     {
+      auth,
       headers: {
-        "Authorization":
-          "Basic " +
-          Buffer.from(
-            `${process.env.WP_USER}:${process.env.WP_APP_PASSWORD}`
-          ).toString("base64"),
-        "Content-Disposition": "attachment; filename=featured.jpg",
-        "Content-Type": "image/jpeg"
+        "Content-Type": "image/jpeg",
+        "Content-Disposition": "attachment; filename=image.jpg"
       }
     }
   );
+
   return res.data.id;
 }
 
 export async function publishPost(article, categoryId, imageId) {
   await axios.post(
-    `${process.env.WP_URL}/wp-json/ai/v1/publish`,
+    `${process.env.WP_URL}/wp-json/wp/v2/posts`,
     {
       title: article.title,
       content: article.content_html,
-      category: categoryId,
+      status: "publish",
+      categories: [categoryId],
       featured_media: imageId,
-      tags: article.tags,
-      meta: {
-        rank_math_title: article.meta_title,
-        rank_math_description: article.meta_description,
-        rank_math_focus_keyword: article.focus_keyword
-      }
+      tags: article.tags
     },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "X-AI-KEY": "insidernews_ai_2026"
-      }
-    }
+    { auth }
   );
 }
