@@ -6,33 +6,34 @@ const client = new OpenAI({
 
 export async function generateArticle(topic) {
   const prompt = `
-Scrie un articol de presă în limba română, stil jurnalistic profesionist.
+Scrie un articol de presă în limba română.
 
 REGULI OBLIGATORII:
-- OUTPUT DOAR HTML VALID WordPress
+- OUTPUT DOAR JSON
+- Conținut HTML valid WordPress
 - FĂRĂ Markdown (#, ##, **, *)
 - FĂRĂ emoji
-- FĂRĂ semne speciale în titlu
+- Stil jurnalistic profesionist
+- 600–900 cuvinte
 - Structură:
   <h1>Titlu</h1>
   <p>Paragrafe</p>
   <h2>Subtitluri</h2>
-- 600–900 cuvinte
-- Ton neutru, informativ
 
 SEO:
-- Creează și:
-  - meta_title (max 60 caractere)
-  - meta_description (max 160 caractere)
-  - focus_keyword (1 expresie clară)
+- meta_title max 60 caractere
+- meta_description max 160 caractere
+- focus_keyword clar
+- 5–8 tag-uri SEO (fără diacritice)
 
-Răspuns STRICT în format JSON:
+FORMAT RĂSPUNS:
 {
   "title": "",
   "content_html": "",
   "meta_title": "",
   "meta_description": "",
-  "focus_keyword": ""
+  "focus_keyword": "",
+  "tags": []
 }
 
 TOPIC: ${topic}
@@ -41,7 +42,7 @@ TOPIC: ${topic}
   const res = await client.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.6,
-    max_tokens: 1400,
+    max_tokens: 1500,
     messages: [{ role: "user", content: prompt }]
   });
 
