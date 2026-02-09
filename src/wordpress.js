@@ -17,4 +17,5 @@ export async function publishPost({ title, content, category }) {
   );
 
   console.log("Webhook response:", response.data);
+  return response.data;
 }
