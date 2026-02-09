@@ -7,6 +7,13 @@ export function loadHistory() {
   return JSON.parse(fs.readFileSync(FILE, "utf8"));
 }
 
+export function isDuplicate(topic) {
+  const history = loadHistory();
+  return history.some(
+    t => t.topic.toLowerCase() === topic.toLowerCase()
+  );
+}
+
 export function saveTopic(topic) {
   const history = loadHistory();
   history.push({
@@ -14,9 +21,4 @@ export function saveTopic(topic) {
     date: new Date().toISOString()
   });
   fs.writeFileSync(FILE, JSON.stringify(history, null, 2));
-}
-
-export function isDuplicate(topic) {
-  const history = loadHistory();
-  return history.some(t => t.topic.toLowerCase() === topic.toLowerCase());
 }
