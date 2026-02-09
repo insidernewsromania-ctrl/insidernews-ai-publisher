@@ -1,52 +1,55 @@
 import OpenAI from "openai";
 
-const client = new OpenAI({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-export async function generateArticle(topic) {
-  const prompt = `
-Scrie un articol de știri în limba română.
-
-REGULI OBLIGATORII:
-- Doar informații verificabile
-- Fără speculații, anticipări sau zvonuri
-- Fără "ar putea", "se discută", "surse spun"
-- Stil jurnalistic neutru
-- Fără concluzii personale
-- Fără titlu în conținut
-
-STRUCTURĂ WORDPRESS:
-<p>Introducere clară</p>
-<h2>Context</h2>
-<p>Paragrafe</p>
-<h2>Detalii relevante</h2>
-<p>Paragrafe</p>
-
-SEO:
-- meta_title (max 60 caractere)
-- meta_description (max 160 caractere)
-- focus_keyword
-- 5–8 tag-uri SEO (fără diacritice)
-
-FORMAT JSON STRICT:
-{
-  "content_html": "",
-  "meta_title": "",
-  "meta_description": "",
-  "focus_keyword": "",
-  "tags": []
+function todayRO() {
+  return new Date().toLocaleDateString("ro-RO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
 }
 
-SUBIECT: ${topic}
+export async function generateArticle(category) {
+  const today = todayRO();
+
+  const prompt = `
+Ești jurnalist de știri de actualitate.
+
+SCRII EXCLUSIV despre un EVENIMENT care:
+- s-a produs ASTĂZI (${today})
+  SAU
+- a fost ANUNȚAT OFICIAL ASTĂZI (${today})
+
+REGULI:
+- Subiectul principal trebuie să fie din ziua de AZI
+- Este PERMISĂ menționarea altor ani (2024, 2025 etc.) DOAR ca context secundar
+- NU prezenta evenimente vechi ca fiind actuale
+- NU scrie analize generale sau retrospective
+- Ton: știre de presă, factual, neutru
+
+STRUCTURĂ:
+- Lead clar: ce s-a întâmplat ASTĂZI
+- 2–4 paragrafe explicative
+- Subtitluri doar dacă sunt necesare
+
+Categoria: ${category}
+
+Returnează STRICT JSON, fără markdown:
+{
+  "title": "",
+  "content": "",
+  "focus_keyword": ""
+}
 `;
 
-  const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.35,
-    max_tokens: 1500,
+  const response = await openai.chat.completions.create({
+    model: "gpt-4.1-mini",
+    temperature: 0.4,
     messages: [{ role: "user", content: prompt }]
   });
 
-  return JSON.parse(res.choices[0].message.content);
+  return JSON.parse(response.choices[0].message.content);
 }
