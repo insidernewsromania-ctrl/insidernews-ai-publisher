@@ -1,23 +1,18 @@
 import axios from "axios";
 
-const WP_URL = process.env.WP_URL;
-const WP_USER = process.env.WP_USER;
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD;
-
-export async function publishPost({ title, content, category }) {
-  console.log("Publishing to:", WP_URL);
+export async function publishPost({ title, content }) {
+  const url = "https://insidernews.ro/wp-json/wp/v2/posts";
 
   const auth = Buffer.from(
-    `${WP_USER}:${WP_APP_PASSWORD}`
+    "ai_publisher:EfVB_Ihhh_MdvE_cRuk_pBGP_zNnG"
   ).toString("base64");
 
   const response = await axios.post(
-    `${WP_URL}/wp-json/wp/v2/posts`,
+    url,
     {
       title,
       content,
-      status: "publish",
-      categories: [category]
+      status: "draft"
     },
     {
       headers: {
@@ -27,6 +22,6 @@ export async function publishPost({ title, content, category }) {
     }
   );
 
-  console.log("WordPress response:", response.status);
-  console.log("Post URL:", response.data.link);
+  console.log("STATUS:", response.status);
+  console.log("ID POST:", response.data.id);
 }
