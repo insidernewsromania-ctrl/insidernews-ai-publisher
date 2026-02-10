@@ -170,6 +170,12 @@ function parsePositiveInt(value, fallback = 0) {
   return Math.floor(parsed);
 }
 
+function parseNonNegativeInt(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
 const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "20");
 const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
@@ -232,6 +238,10 @@ const WP_PUBLISH_RETRIES = parsePositiveInt(process.env.WP_PUBLISH_RETRIES || "3
 const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
   process.env.WP_PUBLISH_RETRY_BASE_MS || "2500",
   2500
+);
+const FORCE_CATEGORY_ID = parseNonNegativeInt(
+  process.env.FORCE_CATEGORY_ID || "7",
+  7
 );
 const CATEGORY_OVERRIDE_ENABLED = process.env.CATEGORY_OVERRIDE_ENABLED !== "false";
 const CATEGORY_SOURCE_BIAS = parsePositiveInt(process.env.CATEGORY_SOURCE_BIAS || "2", 2);
@@ -398,6 +408,7 @@ function keywordFromText(text, maxWords = 4) {
 }
 
 function categoryNameById(categoryId) {
+  if (categoryId === 7) return "ultimele_stiri";
   return categoryById.get(categoryId)?.name || `cat_${categoryId || "none"}`;
 }
 
@@ -461,6 +472,15 @@ function pickBestCategory(scores, fallbackCategoryId) {
 }
 
 function resolveCategoryId(item, article) {
+  if (FORCE_CATEGORY_ID > 0) {
+    return {
+      categoryId: FORCE_CATEGORY_ID,
+      changed: Number(item?.categoryId || 0) !== FORCE_CATEGORY_ID,
+      scores: {},
+      reason: "forced_category",
+    };
+  }
+
   const fallbackCategoryId = categoryById.has(item?.categoryId)
     ? item.categoryId
     : 4063;
@@ -1099,6 +1119,7 @@ async function publishFallbackArticle() {
     console.log("Fallback category:", cat.name);
     const article = await generateArticle(cat.name);
     if (!article) continue;
+    const targetCategoryId = FORCE_CATEGORY_ID > 0 ? FORCE_CATEGORY_ID : cat.id;
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
@@ -1113,7 +1134,7 @@ async function publishFallbackArticle() {
       continue;
     }
 
-    const linkedCount = await addInternalLinks(article, cat.id);
+    const linkedCount = await addInternalLinks(article, targetCategoryId);
     if (linkedCount > 0) {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
@@ -1127,7 +1148,7 @@ async function publishFallbackArticle() {
       }
     }
 
-    const success = await tryPublishArticle(article, cat.id, null);
+    const success = await tryPublishArticle(article, targetCategoryId, null);
     if (success) return true;
   }
 

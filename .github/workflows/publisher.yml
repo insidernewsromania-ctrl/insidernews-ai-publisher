@@ -56,6 +56,7 @@ jobs:
           INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK: "false"
           REQUIRE_INTERNAL_LINK: "false"
           MIN_INTERNAL_LINKS: "1"
+          FORCE_CATEGORY_ID: "7"
           CATEGORY_OVERRIDE_ENABLED: "true"
           CATEGORY_SOURCE_BIAS: "2"
           CATEGORY_OVERRIDE_MARGIN: "2"
