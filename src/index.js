@@ -43,6 +43,7 @@ const CATEGORY_KEYWORDS = {
       "presedinte",
       "premier",
       "prim ministru",
+      "prim ministrul",
       "guvern",
       "parlament",
       "senat",
@@ -51,19 +52,23 @@ const CATEGORY_KEYWORDS = {
       "alegeri",
       "coalitie",
       "opozitie",
-      "ministru",
+      "motiune de cenzura",
+      "cabinet",
     ],
     normal: [
       "politica",
       "deputat",
       "senator",
+      "ministru",
+      "minister",
+      "primar",
+      "consiliu local",
       "lege",
       "ordonanta",
       "vot",
       "candidat",
       "campanie",
-      "administratie",
-      "reforma administrativa",
+      "mandat",
     ],
   },
   4063: {
@@ -75,14 +80,17 @@ const CATEGORY_KEYWORDS = {
       "sanatate",
       "spital",
       "pacient",
-      "social",
       "ghid",
       "inot",
       "inoate",
       "invata",
       "comunitate",
+      "accident",
+      "incendiu",
+      "cutremur",
     ],
     normal: [
+      "social",
       "copii",
       "familie",
       "universitate",
@@ -97,6 +105,7 @@ const CATEGORY_KEYWORDS = {
       "turism",
       "cultura",
       "societate",
+      "ajutor social",
     ],
   },
   4064: {
@@ -163,6 +172,37 @@ const CATEGORY_KEYWORDS = {
     ],
   },
 };
+
+const POLITICS_DECISIVE_TERMS = [
+  "presedinte",
+  "premier",
+  "prim ministru",
+  "guvern",
+  "parlament",
+  "senat",
+  "camera deputatilor",
+  "partid",
+  "alegeri",
+  "coalitie",
+  "opozitie",
+  "motiune de cenzura",
+];
+
+const SOCIAL_DECISIVE_TERMS = [
+  "educatie",
+  "scoala",
+  "elev",
+  "profesor",
+  "sanatate",
+  "spital",
+  "pacient",
+  "comunitate",
+  "familie",
+  "accident",
+  "incendiu",
+  "cutremur",
+  "ghid",
+];
 
 function parsePositiveInt(value, fallback = 0) {
   const parsed = Number(value);
@@ -240,8 +280,8 @@ const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
   2500
 );
 const FORCE_CATEGORY_ID = parseNonNegativeInt(
-  process.env.FORCE_CATEGORY_ID || "7",
-  7
+  process.env.FORCE_CATEGORY_ID || "0",
+  0
 );
 const CATEGORY_OVERRIDE_ENABLED = process.env.CATEGORY_OVERRIDE_ENABLED !== "false";
 const CATEGORY_SOURCE_BIAS = parsePositiveInt(process.env.CATEGORY_SOURCE_BIAS || "2", 2);
@@ -250,6 +290,18 @@ const CATEGORY_OVERRIDE_MARGIN = parsePositiveInt(
   2
 );
 const CATEGORY_MIN_SCORE = parsePositiveInt(process.env.CATEGORY_MIN_SCORE || "3", 3);
+const CATEGORY_MIN_SOURCE_SIGNAL = parsePositiveInt(
+  process.env.CATEGORY_MIN_SOURCE_SIGNAL || "6",
+  6
+);
+const CATEGORY_SECOND_BEST_MARGIN = parsePositiveInt(
+  process.env.CATEGORY_SECOND_BEST_MARGIN || "2",
+  2
+);
+const DEFAULT_UNCERTAIN_CATEGORY_ID = parsePositiveInt(
+  process.env.DEFAULT_UNCERTAIN_CATEGORY_ID || "7",
+  7
+);
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -423,34 +475,70 @@ function countKeywordMatches(text, keywords = []) {
   return matches;
 }
 
+function decisiveCategoryMatches(item, terms = []) {
+  const sourceText = normalizeText(
+    [item?.title, item?.content, item?.source].filter(Boolean).join(" ")
+  );
+  return countKeywordMatches(sourceText, terms);
+}
+
 function computeCategoryScores(item, article) {
-  const text = normalizeText(
+  const sourceTitleText = normalizeText(item?.title || "");
+  const sourceBodyText = normalizeText(
+    [item?.content, item?.source].filter(Boolean).join(" ")
+  );
+  const generatedText = normalizeText(
     [
       article?.title,
       article?.focus_keyword,
       Array.isArray(article?.tags) ? article.tags.join(" ") : "",
-      stripHtml(article?.content_html || "").slice(0, 2000),
-      item?.title,
-      item?.content,
-      item?.source,
+      stripHtml(article?.content_html || "").slice(0, 1200),
     ]
       .filter(Boolean)
       .join(" ")
   );
 
   const scores = {};
+  const scoreDetails = {};
   for (const category of categories) {
     const rule = CATEGORY_KEYWORDS[category.id] || { strong: [], normal: [] };
-    const strongMatches = countKeywordMatches(text, rule.strong);
-    const normalMatches = countKeywordMatches(text, rule.normal);
-    scores[category.id] = strongMatches * 3 + normalMatches;
+
+    const titleStrongMatches = countKeywordMatches(sourceTitleText, rule.strong);
+    const titleNormalMatches = countKeywordMatches(sourceTitleText, rule.normal);
+    const bodyStrongMatches = countKeywordMatches(sourceBodyText, rule.strong);
+    const bodyNormalMatches = countKeywordMatches(sourceBodyText, rule.normal);
+    const generatedStrongMatches = countKeywordMatches(generatedText, rule.strong);
+    const generatedNormalMatches = countKeywordMatches(generatedText, rule.normal);
+
+    // Favorizăm puternic semnalele din sursa RSS față de textul rescris de AI.
+    const sourceSignal =
+      titleStrongMatches * 7 +
+      titleNormalMatches * 3 +
+      bodyStrongMatches * 4 +
+      bodyNormalMatches * 2;
+    const generatedSignal = generatedStrongMatches + generatedNormalMatches;
+
+    scores[category.id] = sourceSignal + generatedSignal;
+    scoreDetails[category.id] = {
+      sourceSignal,
+      generatedSignal,
+      titleStrongMatches,
+      titleNormalMatches,
+      bodyStrongMatches,
+      bodyNormalMatches,
+      generatedStrongMatches,
+      generatedNormalMatches,
+    };
   }
 
   if (categoryById.has(item?.categoryId)) {
     scores[item.categoryId] = (scores[item.categoryId] || 0) + CATEGORY_SOURCE_BIAS;
   }
 
-  return scores;
+  return {
+    scores,
+    scoreDetails,
+  };
 }
 
 function pickBestCategory(scores, fallbackCategoryId) {
@@ -463,9 +551,15 @@ function pickBestCategory(scores, fallbackCategoryId) {
     id: fallbackCategoryId,
     score: Number(scores?.[fallbackCategoryId] || 0),
   };
+  const second = entries[1] || {
+    id: fallbackCategoryId,
+    score: Number(scores?.[fallbackCategoryId] || 0),
+  };
   return {
     bestId: best.id,
     bestScore: best.score,
+    secondId: second.id,
+    secondScore: second.score,
     currentScore: Number(scores?.[fallbackCategoryId] || 0),
     entries,
   };
@@ -481,24 +575,62 @@ function resolveCategoryId(item, article) {
     };
   }
 
-  const fallbackCategoryId = categoryById.has(item?.categoryId)
-    ? item.categoryId
-    : 4063;
+  const sourceCategoryId = Number(item?.categoryId || 0);
+  const sourceCategoryKnown = categoryById.has(sourceCategoryId);
+  const uncertainCategoryId = DEFAULT_UNCERTAIN_CATEGORY_ID;
+  const fallbackCategoryId = sourceCategoryKnown ? sourceCategoryId : uncertainCategoryId;
+
+  const { scores, scoreDetails } = computeCategoryScores(item, article);
+  const {
+    bestId,
+    bestScore,
+    secondScore,
+    currentScore,
+  } = pickBestCategory(scores, fallbackCategoryId);
 
   if (!CATEGORY_OVERRIDE_ENABLED) {
     return {
       categoryId: fallbackCategoryId,
       changed: false,
-      scores: {},
+      scores,
       reason: "override_disabled",
     };
   }
 
-  const scores = computeCategoryScores(item, article);
-  const { bestId, bestScore, currentScore } = pickBestCategory(
-    scores,
-    fallbackCategoryId
-  );
+  const bestSourceSignal = Number(scoreDetails?.[bestId]?.sourceSignal || 0);
+
+  if (!sourceCategoryKnown) {
+    if (bestScore < CATEGORY_MIN_SCORE) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "unknown_source_below_min_score",
+      };
+    }
+    if (bestSourceSignal < CATEGORY_MIN_SOURCE_SIGNAL) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "unknown_source_low_source_signal",
+      };
+    }
+    if (bestScore < secondScore + CATEGORY_SECOND_BEST_MARGIN) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "unknown_source_low_confidence",
+      };
+    }
+    return {
+      categoryId: bestId,
+      changed: bestId !== sourceCategoryId,
+      scores,
+      reason: "unknown_source_inferred",
+    };
+  }
 
   if (bestId === fallbackCategoryId) {
     return {
@@ -518,6 +650,15 @@ function resolveCategoryId(item, article) {
     };
   }
 
+  if (bestSourceSignal < CATEGORY_MIN_SOURCE_SIGNAL) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores,
+      reason: "low_source_signal",
+    };
+  }
+
   if (bestScore < currentScore + CATEGORY_OVERRIDE_MARGIN) {
     return {
       categoryId: fallbackCategoryId,
@@ -525,6 +666,39 @@ function resolveCategoryId(item, article) {
       scores,
       reason: "insufficient_margin",
     };
+  }
+
+  if (bestScore < secondScore + CATEGORY_SECOND_BEST_MARGIN) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores,
+      reason: "too_close_to_second_best",
+    };
+  }
+
+  if (fallbackCategoryId === 4063 && bestId === 4058) {
+    const decisiveMatches = decisiveCategoryMatches(item, POLITICS_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_social_to_politics",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4058 && bestId === 4063) {
+    const decisiveMatches = decisiveCategoryMatches(item, SOCIAL_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_politics_to_social",
+      };
+    }
   }
 
   return {
@@ -1086,7 +1260,11 @@ async function publishFromRssItem(item) {
     console.log(
       `Category override: ${categoryNameById(item.categoryId)} -> ${categoryNameById(
         targetCategoryId
-      )} (${scoreText})`
+      )} [${categoryDecision.reason}] (${scoreText})`
+    );
+  } else if (categoryDecision.reason && categoryDecision.reason !== "same_as_source") {
+    console.log(
+      `Category kept: ${categoryNameById(targetCategoryId)} [${categoryDecision.reason}]`
     );
   }
 
