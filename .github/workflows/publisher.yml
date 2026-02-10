@@ -32,7 +32,7 @@ jobs:
           SAME_DAY_ONLY: "true"
           NEWS_TIMEZONE: "Europe/Bucharest"
           STRICT_RECENT: "true"
-          CANDIDATE_LIMIT: "20"
+          CANDIDATE_LIMIT: "40"
           MIN_WORDS: "350"
           TITLE_MAX_CHARS: "110"
           SEO_TITLE_MAX_CHARS: "60"

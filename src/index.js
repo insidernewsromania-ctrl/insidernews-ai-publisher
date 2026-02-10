@@ -210,14 +210,41 @@ function isValidCandidate(item) {
   return true;
 }
 
-function prepareCandidates(items) {
-  const withContent = items.filter(item => {
-    const size = (item.content || "").length;
-    const hasEnough = size >= MIN_CONTENT_CHARS || item.title.length > 20;
-    return hasEnough && isValidCandidate(item);
-  });
+function candidateRejectionReason(item) {
+  if (!item?.title) return "missing_title";
+  if (!isRecentEnough(item)) {
+    if (!item?.publishedAt) return "missing_published_at";
+    return "not_same_day_or_not_recent";
+  }
+  const combined = `${item.title} ${item.content || ""}`;
+  if (!item?.publishedAt && hasOnlyOldYears(combined)) {
+    return "only_old_years_without_date";
+  }
+  const size = (item.content || "").length;
+  const hasEnough = size >= MIN_CONTENT_CHARS || item.title.length > 20;
+  if (!hasEnough) return "too_little_content";
+  return null;
+}
 
-  return withContent.sort((a, b) => scoreItem(b) - scoreItem(a));
+function prepareCandidates(items) {
+  const stats = {};
+  const accepted = [];
+  for (const item of items) {
+    const reason = candidateRejectionReason(item);
+    if (reason) {
+      stats[reason] = (stats[reason] || 0) + 1;
+      continue;
+    }
+    if (isValidCandidate(item)) {
+      accepted.push(item);
+    } else {
+      stats.unknown = (stats.unknown || 0) + 1;
+    }
+  }
+  return {
+    candidates: accepted.sort((a, b) => scoreItem(b) - scoreItem(a)),
+    rejectionStats: stats,
+  };
 }
 
 async function maybeUploadImage(article) {
@@ -373,8 +400,11 @@ async function run() {
   );
   console.log("Collected items:", items.length);
 
-  const candidates = prepareCandidates(items);
+  const { candidates, rejectionStats } = prepareCandidates(items);
   console.log("Valid candidates:", candidates.length);
+  if (candidates.length === 0) {
+    console.log("Candidate rejection summary:", rejectionStats);
+  }
   let published = 0;
 
   for (const item of candidates) {

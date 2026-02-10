@@ -48,11 +48,23 @@ function shuffle(values) {
   return items;
 }
 
+function publishedTimestamp(value) {
+  if (!value) return 0;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return date.getTime();
+}
+
+function sortByRecency(items) {
+  return [...items].sort(
+    (a, b) => publishedTimestamp(b?.publishedAt) - publishedTimestamp(a?.publishedAt)
+  );
+}
+
 async function fetchSource(source) {
   try {
     const feed = await parser.parseURL(source.url);
-    return (feed.items || [])
-      .slice(0, source.maxPerRun)
+    const normalized = (feed.items || [])
       .map(item => ({
         title: item.title || "",
         content:
@@ -67,6 +79,7 @@ async function fetchSource(source) {
         publishedAt: item.isoDate || item.pubDate || item.published || null,
       }))
       .filter(item => item.title || item.content);
+    return sortByRecency(normalized).slice(0, source.maxPerRun);
   } catch (err) {
     console.error("RSS ERROR:", source.name, err.message);
     return [];
@@ -91,7 +104,8 @@ async function collectFromSources(sources, target, seen) {
   for (const source of ordered) {
     collected.push(...(await fetchSource(source)));
   }
-  return dedupe(collected, seen).slice(0, target);
+  const unique = dedupe(collected, seen);
+  return sortByRecency(unique).slice(0, target);
 }
 
 export async function collectNews(limit) {
