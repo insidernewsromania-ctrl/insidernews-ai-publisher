@@ -303,6 +303,30 @@ const DEFAULT_UNCERTAIN_CATEGORY_ID = parsePositiveInt(
   process.env.DEFAULT_UNCERTAIN_CATEGORY_ID || "7",
   7
 );
+const SOURCE_ATTRIBUTION_ENABLED = process.env.SOURCE_ATTRIBUTION_ENABLED !== "false";
+const SOURCE_ATTRIBUTION_REQUIRE_LINK =
+  process.env.SOURCE_ATTRIBUTION_REQUIRE_LINK !== "false";
+const EDITORIAL_NOTE_ENABLED = process.env.EDITORIAL_NOTE_ENABLED !== "false";
+const EDITORIAL_AUTHOR_NAME = (
+  process.env.EDITORIAL_AUTHOR_NAME || "Redactia Insider News"
+)
+  .toString()
+  .trim();
+const EDITORIAL_AUTHOR_PROFILE_URL = (
+  process.env.EDITORIAL_AUTHOR_PROFILE_URL || ""
+)
+  .toString()
+  .trim();
+const EDITORIAL_POLICY_URL = (process.env.EDITORIAL_POLICY_URL || "")
+  .toString()
+  .trim();
+const RIGHT_OF_REPLY_URL = (process.env.RIGHT_OF_REPLY_URL || "")
+  .toString()
+  .trim();
+const CORRECTIONS_EMAIL = (process.env.CORRECTIONS_EMAIL || "")
+  .toString()
+  .trim();
+const BLOCK_TABLOID_TITLES = process.env.BLOCK_TABLOID_TITLES !== "false";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -327,6 +351,18 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
   /\bcurs valutar\b/i,
   /\bprogram tv\b/i,
   /\brezultate loto\b/i,
+];
+
+const TABLOID_TITLE_PHRASES = [
+  "soc total",
+  "bomba",
+  "incredibil",
+  "de necrezut",
+  "nu o sa iti vina sa crezi",
+  "halucinant",
+  "uluitor",
+  "senzational",
+  "wow",
 ];
 
 const internalLinkTargetsCache = new Map();
@@ -759,6 +795,35 @@ function escapeHtmlText(text) {
     .replace(/'/g, "&#39;");
 }
 
+function escapeHtmlAttr(text) {
+  return escapeHtmlText(text).replace(/`/g, "&#96;");
+}
+
+function normalizedUrl(value) {
+  const raw = `${value || ""}`.trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) return raw;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function linkLabelFromUrl(value) {
+  const safe = normalizedUrl(value);
+  if (!safe) return "";
+  try {
+    const url = new URL(safe);
+    const path = (url.pathname || "").replace(/\/+$/, "");
+    return `${url.hostname}${path}` || url.hostname;
+  } catch {
+    return safe;
+  }
+}
+
 function ensureH2WithKeyword(article) {
   if (!article?.content_html || hasH2Heading(article.content_html)) return;
   const headingText = cleanTitle(
@@ -781,6 +846,118 @@ function ensureH2WithKeyword(article) {
 function isLowEditorialValueTitle(title) {
   const normalized = normalizeText(title || "");
   return LOW_EDITORIAL_VALUE_PATTERNS.some(pattern => pattern.test(normalized));
+}
+
+function hasTabloidTitleSignals(title) {
+  const value = `${title || ""}`.trim();
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+
+  if (TABLOID_TITLE_PHRASES.some(phrase => normalized.includes(normalizeText(phrase)))) {
+    return true;
+  }
+  if (/[!?]{2,}/.test(value)) return true;
+  if (/!/.test(value)) return true;
+
+  const letters = value.match(/[A-Za-zĂÂÎȘȚăâîșț]/g) || [];
+  const upper = value.match(/[A-ZĂÂÎȘȚ]/g) || [];
+  if (letters.length >= 12 && upper.length / letters.length > 0.65) {
+    return true;
+  }
+  return false;
+}
+
+function hasSourceAttributionBlock(html) {
+  return /data-source-attribution="true"/i.test(html || "");
+}
+
+function hasEditorialNoteBlock(html) {
+  return /data-editorial-note="true"/i.test(html || "");
+}
+
+function appendSourceAttribution(article, item) {
+  if (!SOURCE_ATTRIBUTION_ENABLED || !article?.content_html) return;
+  if (hasSourceAttributionBlock(article.content_html)) return;
+
+  const sourceName = cleanTitle(item?.source || "Sursa", 140);
+  const sourceLinkRaw = `${item?.link || ""}`.trim();
+  const sourceLink = normalizedUrl(item?.link || "");
+  if (SOURCE_ATTRIBUTION_REQUIRE_LINK && !sourceLink && !sourceLinkRaw) return;
+
+  const sourceDateText = item?.publishedAt
+    ? localTimeLabel(new Date(item.publishedAt), NEWS_TIMEZONE)
+    : "";
+  const sourceLabel = sourceLink
+    ? `<a href="${escapeHtmlAttr(
+      sourceLink
+    )}" rel="nofollow noopener noreferrer" target="_blank">${escapeHtmlText(
+      linkLabelFromUrl(sourceLink)
+    )}</a>`
+    : escapeHtmlText(sourceLinkRaw);
+
+  const lines = [
+    `<p><strong>Sursa:</strong> ${escapeHtmlText(sourceName)}${sourceLabel ? ` - ${sourceLabel}` : ""}</p>`,
+  ];
+  if (sourceDateText) {
+    lines.push(
+      `<p><strong>Data sursei:</strong> ${escapeHtmlText(sourceDateText)} (${escapeHtmlText(
+        NEWS_TIMEZONE
+      )})</p>`
+    );
+  }
+
+  article.content_html = `${article.content_html}
+<aside data-source-attribution="true">
+${lines.join("\n")}
+</aside>`;
+}
+
+function appendEditorialNote(article) {
+  if (!EDITORIAL_NOTE_ENABLED || !article?.content_html) return;
+  if (hasEditorialNoteBlock(article.content_html)) return;
+
+  const authorName = EDITORIAL_AUTHOR_NAME || "Redactia Insider News";
+  const authorProfileUrl = normalizedUrl(EDITORIAL_AUTHOR_PROFILE_URL);
+  const policyUrl = normalizedUrl(EDITORIAL_POLICY_URL);
+  const replyUrl = normalizedUrl(RIGHT_OF_REPLY_URL);
+  const correctionEmail = CORRECTIONS_EMAIL.includes("@") ? CORRECTIONS_EMAIL : "";
+
+  const authorLine = authorProfileUrl
+    ? `<p><strong>Autor:</strong> <a href="${escapeHtmlAttr(
+      authorProfileUrl
+    )}" rel="noopener">${escapeHtmlText(authorName)}</a></p>`
+    : `<p><strong>Autor:</strong> ${escapeHtmlText(authorName)}</p>`;
+
+  const references = [];
+  if (policyUrl) {
+    references.push(
+      `<a href="${escapeHtmlAttr(policyUrl)}" rel="noopener">Politica editoriala</a>`
+    );
+  }
+  if (replyUrl) {
+    references.push(
+      `<a href="${escapeHtmlAttr(replyUrl)}" rel="noopener">Drept la replica</a>`
+    );
+  }
+  if (correctionEmail) {
+    references.push(
+      `Corecturi: <a href="mailto:${escapeHtmlAttr(correctionEmail)}">${escapeHtmlText(
+        correctionEmail
+      )}</a>`
+    );
+  }
+
+  const referencesLine =
+    references.length > 0
+      ? `<p>${references.join(" · ")}</p>`
+      : "<p>Pentru corecturi, redactia actualizeaza articolul imediat ce apar date verificabile.</p>";
+
+  article.content_html = `${article.content_html}
+<section data-editorial-note="true">
+${authorLine}
+${referencesLine}
+</section>`;
 }
 
 function buildMetaDescription(article) {
@@ -812,9 +989,12 @@ function buildMetaDescription(article) {
   return candidate;
 }
 
-function qualityGateIssues(article) {
+function qualityGateIssues(article, context = {}) {
   const issues = [];
   if (!isStrongTitle(article?.title || "")) issues.push("weak_title");
+  if (BLOCK_TABLOID_TITLES && hasTabloidTitleSignals(article?.title || "")) {
+    issues.push("tabloid_title");
+  }
   if (!hasH2Heading(article?.content_html || "")) issues.push("missing_h2");
   const lead = firstParagraphText(article?.content_html || "");
   if (wordCount(lead) < MIN_LEAD_WORDS) issues.push("lead_too_short");
@@ -835,6 +1015,14 @@ function qualityGateIssues(article) {
     countInternalLinks(article?.content_html || "") < MIN_INTERNAL_LINKS
   ) {
     issues.push("missing_internal_links");
+  }
+  if (SOURCE_ATTRIBUTION_ENABLED && context?.expectsSourceAttribution) {
+    if (!hasSourceAttributionBlock(article?.content_html || "")) {
+      issues.push("missing_source_attribution");
+    }
+  }
+  if (EDITORIAL_NOTE_ENABLED && !hasEditorialNoteBlock(article?.content_html || "")) {
+    issues.push("missing_editorial_note");
   }
   return issues;
 }
@@ -1304,9 +1492,13 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
+  appendSourceAttribution(article, item);
+  appendEditorialNote(article);
 
   if (STRICT_QUALITY_GATE) {
-    const issues = qualityGateIssues(article);
+    const issues = qualityGateIssues(article, {
+      expectsSourceAttribution: Boolean(item?.link),
+    });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
       return false;
@@ -1348,9 +1540,12 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
+    appendEditorialNote(article);
 
     if (STRICT_QUALITY_GATE) {
-      const issues = qualityGateIssues(article);
+      const issues = qualityGateIssues(article, {
+        expectsSourceAttribution: false,
+      });
       if (issues.length > 0) {
         console.log("Fallback quality gate failed:", issues.join(", "));
         continue;

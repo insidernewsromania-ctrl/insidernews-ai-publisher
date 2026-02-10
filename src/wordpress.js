@@ -14,6 +14,14 @@ const auth = {
   password: process.env.WP_APP_PASSWORD,
 };
 
+function parsePositiveInt(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+const DEFAULT_WP_AUTHOR_ID = parsePositiveInt(process.env.WP_AUTHOR_ID || "0", 0);
+
 function wpBaseUrl() {
   const base = process.env.WP_URL || "";
   return base.replace(/\/$/, "");
@@ -260,6 +268,9 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
     content: article.content_html,
     status: "publish",
   };
+
+  const authorId = parsePositiveInt(options.authorId || DEFAULT_WP_AUTHOR_ID, 0);
+  if (authorId > 0) payload.author = authorId;
 
   if (categoryId) payload.categories = [categoryId];
   if (imageId) payload.featured_media = imageId;

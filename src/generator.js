@@ -140,6 +140,7 @@ REGULI:
 - NU prezenta evenimente vechi ca fiind actuale
 - NU scrie analize generale sau retrospective
 - Ton: știre de presă, factual, neutru
+- Evită formulări tabloid (ex.: „șoc”, „bombă”, „de necrezut”)
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
@@ -166,6 +167,7 @@ REGULI OUTPUT:
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
+- Fără semne de exclamare în titlu.
 - Include focus keyword natural în lead și într-un subtitlu H2.
 - Minim ${MIN_WORDS} de cuvinte.
 ${extra}
