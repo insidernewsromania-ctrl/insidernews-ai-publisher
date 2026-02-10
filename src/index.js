@@ -29,6 +29,134 @@ const categories = [
   { name: "economie", id: 4064 },
   { name: "externe", id: 4060 },
 ];
+const categoryById = new Map(categories.map(category => [category.id, category]));
+
+const CATEGORY_KEYWORDS = {
+  4058: {
+    strong: [
+      "presedinte",
+      "premier",
+      "prim ministru",
+      "guvern",
+      "parlament",
+      "senat",
+      "camera deputatilor",
+      "partid",
+      "alegeri",
+      "coalitie",
+      "opozitie",
+      "ministru",
+    ],
+    normal: [
+      "politica",
+      "deputat",
+      "senator",
+      "lege",
+      "ordonanta",
+      "vot",
+      "candidat",
+      "campanie",
+      "administratie",
+      "reforma administrativa",
+    ],
+  },
+  4063: {
+    strong: [
+      "educatie",
+      "scoala",
+      "elev",
+      "profesor",
+      "sanatate",
+      "spital",
+      "pacient",
+      "social",
+      "ghid",
+      "inot",
+      "inoate",
+      "invata",
+      "comunitate",
+    ],
+    normal: [
+      "copii",
+      "familie",
+      "universitate",
+      "liceu",
+      "gradinita",
+      "trafic",
+      "meteo",
+      "vremea",
+      "transport public",
+      "consumator",
+      "sport",
+      "turism",
+      "cultura",
+      "societate",
+    ],
+  },
+  4064: {
+    strong: [
+      "economie",
+      "economic",
+      "business",
+      "afaceri",
+      "companie",
+      "investitie",
+      "profit",
+      "cifra de afaceri",
+      "bursa",
+      "fiscal",
+      "taxe",
+      "inflatie",
+    ],
+    normal: [
+      "banca",
+      "credit",
+      "impozit",
+      "piata",
+      "energie",
+      "industrie",
+      "financiar",
+      "salariu",
+      "cariera",
+      "antreprenor",
+      "startup",
+      "export",
+      "import",
+    ],
+  },
+  4060: {
+    strong: [
+      "international",
+      "extern",
+      "sua",
+      "statele unite",
+      "rusia",
+      "ucraina",
+      "nato",
+      "ue",
+      "uniunea europeana",
+      "macron",
+      "trump",
+      "putin",
+      "zelenski",
+    ],
+    normal: [
+      "franta",
+      "germania",
+      "italia",
+      "spania",
+      "china",
+      "turcia",
+      "moldova",
+      "belgia",
+      "polonia",
+      "israel",
+      "iran",
+      "razboi",
+      "diplomatic",
+    ],
+  },
+};
 
 function parsePositiveInt(value, fallback = 0) {
   const parsed = Number(value);
@@ -83,6 +211,10 @@ const INTERNAL_LINK_FETCH_LIMIT = parsePositiveInt(
   process.env.INTERNAL_LINK_FETCH_LIMIT || "30",
   30
 );
+const INTERNAL_LINK_CATEGORY_STRICT =
+  process.env.INTERNAL_LINK_CATEGORY_STRICT !== "false";
+const INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK =
+  process.env.INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK === "true";
 const REQUIRE_INTERNAL_LINK = process.env.REQUIRE_INTERNAL_LINK === "true";
 const MIN_INTERNAL_LINKS = parsePositiveInt(process.env.MIN_INTERNAL_LINKS || "1", 1);
 const WP_PUBLISH_RETRIES = parsePositiveInt(process.env.WP_PUBLISH_RETRIES || "3", 3);
@@ -90,6 +222,13 @@ const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
   process.env.WP_PUBLISH_RETRY_BASE_MS || "2500",
   2500
 );
+const CATEGORY_OVERRIDE_ENABLED = process.env.CATEGORY_OVERRIDE_ENABLED !== "false";
+const CATEGORY_SOURCE_BIAS = parsePositiveInt(process.env.CATEGORY_SOURCE_BIAS || "2", 2);
+const CATEGORY_OVERRIDE_MARGIN = parsePositiveInt(
+  process.env.CATEGORY_OVERRIDE_MARGIN || "2",
+  2
+);
+const CATEGORY_MIN_SCORE = parsePositiveInt(process.env.CATEGORY_MIN_SCORE || "3", 3);
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -245,6 +384,124 @@ function keywordFromText(text, maxWords = 4) {
     .filter(Boolean)
     .slice(0, maxWords)
     .join(" ");
+}
+
+function categoryNameById(categoryId) {
+  return categoryById.get(categoryId)?.name || `cat_${categoryId || "none"}`;
+}
+
+function countKeywordMatches(text, keywords = []) {
+  if (!text) return 0;
+  let matches = 0;
+  for (const keyword of keywords) {
+    const term = normalizeText(keyword);
+    if (!term) continue;
+    if (text.includes(term)) matches += 1;
+  }
+  return matches;
+}
+
+function computeCategoryScores(item, article) {
+  const text = normalizeText(
+    [
+      article?.title,
+      article?.focus_keyword,
+      Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+      stripHtml(article?.content_html || "").slice(0, 2000),
+      item?.title,
+      item?.content,
+      item?.source,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const scores = {};
+  for (const category of categories) {
+    const rule = CATEGORY_KEYWORDS[category.id] || { strong: [], normal: [] };
+    const strongMatches = countKeywordMatches(text, rule.strong);
+    const normalMatches = countKeywordMatches(text, rule.normal);
+    scores[category.id] = strongMatches * 3 + normalMatches;
+  }
+
+  if (categoryById.has(item?.categoryId)) {
+    scores[item.categoryId] = (scores[item.categoryId] || 0) + CATEGORY_SOURCE_BIAS;
+  }
+
+  return scores;
+}
+
+function pickBestCategory(scores, fallbackCategoryId) {
+  const entries = categories.map(category => ({
+    id: category.id,
+    score: Number(scores?.[category.id] || 0),
+  }));
+  entries.sort((a, b) => b.score - a.score);
+  const best = entries[0] || {
+    id: fallbackCategoryId,
+    score: Number(scores?.[fallbackCategoryId] || 0),
+  };
+  return {
+    bestId: best.id,
+    bestScore: best.score,
+    currentScore: Number(scores?.[fallbackCategoryId] || 0),
+    entries,
+  };
+}
+
+function resolveCategoryId(item, article) {
+  const fallbackCategoryId = categoryById.has(item?.categoryId)
+    ? item.categoryId
+    : 4063;
+
+  if (!CATEGORY_OVERRIDE_ENABLED) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores: {},
+      reason: "override_disabled",
+    };
+  }
+
+  const scores = computeCategoryScores(item, article);
+  const { bestId, bestScore, currentScore } = pickBestCategory(
+    scores,
+    fallbackCategoryId
+  );
+
+  if (bestId === fallbackCategoryId) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores,
+      reason: "same_as_source",
+    };
+  }
+
+  if (bestScore < CATEGORY_MIN_SCORE) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores,
+      reason: "below_min_score",
+    };
+  }
+
+  if (bestScore < currentScore + CATEGORY_OVERRIDE_MARGIN) {
+    return {
+      categoryId: fallbackCategoryId,
+      changed: false,
+      scores,
+      reason: "insufficient_margin",
+    };
+  }
+
+  return {
+    categoryId: bestId,
+    changed: true,
+    scores,
+    reason: "keyword_override",
+  };
 }
 
 function containsNormalized(haystack, needle) {
@@ -430,11 +687,20 @@ async function fetchInternalLinkTargetsCached(cacheKey, categoryId) {
 }
 
 async function loadInternalLinkTargets(categoryId) {
-  const scoped =
-    Number.isFinite(categoryId) && categoryId > 0
-      ? await fetchInternalLinkTargetsCached(`cat:${categoryId}`, categoryId)
-      : [];
+  const hasScopedCategory = Number.isFinite(categoryId) && categoryId > 0;
+  const scoped = hasScopedCategory
+    ? await fetchInternalLinkTargetsCached(`cat:${categoryId}`, categoryId)
+    : [];
+
+  if (INTERNAL_LINK_CATEGORY_STRICT) {
+    if (scoped.length > 0) return scoped;
+    if (!INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK) return [];
+  }
+
   const generic = await fetchInternalLinkTargetsCached("cat:all", null);
+
+  if (!hasScopedCategory) return generic;
+
   const byUrl = new Map();
   for (const target of [...scoped, ...generic]) {
     const url = (target?.url || "").trim();
@@ -725,7 +991,20 @@ async function publishFromRssItem(item) {
     return false;
   }
 
-  const linkedCount = await addInternalLinks(article, item.categoryId);
+  const categoryDecision = resolveCategoryId(item, article);
+  const targetCategoryId = categoryDecision.categoryId;
+  if (categoryDecision.changed) {
+    const scoreText = categories
+      .map(category => `${category.name}:${categoryDecision.scores[category.id] || 0}`)
+      .join(", ");
+    console.log(
+      `Category override: ${categoryNameById(item.categoryId)} -> ${categoryNameById(
+        targetCategoryId
+      )} (${scoreText})`
+    );
+  }
+
+  const linkedCount = await addInternalLinks(article, targetCategoryId);
   if (linkedCount > 0) {
     console.log(`Internal links added: ${linkedCount}`);
   }
@@ -739,7 +1018,7 @@ async function publishFromRssItem(item) {
     }
   }
 
-  return tryPublishArticle(article, item.categoryId, item.link);
+  return tryPublishArticle(article, targetCategoryId, item.link);
 }
 
 async function publishFallbackArticle() {
