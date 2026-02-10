@@ -125,6 +125,50 @@ async function resolveTagIds(tags) {
   return ids;
 }
 
+export async function getRecentPostsForInternalLinks(options = {}) {
+  const limitRaw = Number(options.limit || 30);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(Math.floor(limitRaw), 50))
+    : 30;
+  const categoryId = Number(options.categoryId || 0);
+  const params = new URLSearchParams({
+    per_page: String(limit),
+    orderby: "date",
+    order: "desc",
+    _fields: "id,link,title.rendered,slug,categories,date",
+  });
+  if (Number.isFinite(categoryId) && categoryId > 0) {
+    params.set("categories", String(categoryId));
+  }
+
+  const requestPath = wpApi(`/posts?${params.toString()}`);
+
+  try {
+    const res = await axios.get(requestPath, { auth });
+    return (res.data || [])
+      .map(post => ({
+        id: post?.id || null,
+        url: post?.link || "",
+        title: stripHtml(post?.title?.rendered || "").replace(/\s+/g, " ").trim(),
+      }))
+      .filter(post => post.url && post.title);
+  } catch (authErr) {
+    try {
+      const res = await axios.get(requestPath);
+      return (res.data || [])
+        .map(post => ({
+          id: post?.id || null,
+          url: post?.link || "",
+          title: stripHtml(post?.title?.rendered || "").replace(/\s+/g, " ").trim(),
+        }))
+        .filter(post => post.url && post.title);
+    } catch (err) {
+      console.warn("INTERNAL LINKS FETCH ERROR:", err.message);
+      return [];
+    }
+  }
+}
+
 export async function publishPost(article, categoryId, imageId) {
   const meta = {};
 

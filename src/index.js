@@ -1,7 +1,13 @@
 import { collectNews } from "./rss.js";
 import { rewriteNews } from "./ai.js";
 import { generateArticle } from "./generator.js";
-import { publishPost, uploadImage, isPostDuplicate } from "./wordpress.js";
+import {
+  getRecentPostsForInternalLinks,
+  publishPost,
+  uploadImage,
+  isPostDuplicate,
+} from "./wordpress.js";
+import { addInternalLinksToHtml } from "./internal-links.js";
 import { downloadImage } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
 import {
@@ -60,6 +66,14 @@ const META_DESCRIPTION_MAX_CHARS = parsePositiveInt(
 );
 const MIN_LEAD_WORDS = parsePositiveInt(process.env.MIN_LEAD_WORDS || "18", 18);
 const STRICT_QUALITY_GATE = process.env.STRICT_QUALITY_GATE !== "false";
+const INTERNAL_LINKING_ENABLED = process.env.INTERNAL_LINKING_ENABLED !== "false";
+const INTERNAL_LINK_MAX = parsePositiveInt(process.env.INTERNAL_LINK_MAX || "3", 3);
+const INTERNAL_LINK_FETCH_LIMIT = parsePositiveInt(
+  process.env.INTERNAL_LINK_FETCH_LIMIT || "30",
+  30
+);
+const REQUIRE_INTERNAL_LINK = process.env.REQUIRE_INTERNAL_LINK === "true";
+const MIN_INTERNAL_LINKS = parsePositiveInt(process.env.MIN_INTERNAL_LINKS || "1", 1);
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -85,6 +99,8 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
   /\bprogram tv\b/i,
   /\brezultate loto\b/i,
 ];
+
+const internalLinkTargetsCache = new Map();
 
 function isBreakingTitle(title) {
   const normalized = normalizeText(title);
@@ -229,7 +245,134 @@ function qualityGateIssues(article) {
       issues.push("keyword_not_in_title");
     }
   }
+  if (
+    REQUIRE_INTERNAL_LINK &&
+    countInternalLinks(article?.content_html || "") < MIN_INTERNAL_LINKS
+  ) {
+    issues.push("missing_internal_links");
+  }
   return issues;
+}
+
+function wpBaseHost() {
+  const value = process.env.WP_URL || "";
+  try {
+    const url = new URL(value);
+    return (url.hostname || "").replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function countInternalLinks(html) {
+  const source = html || "";
+  const matches = [...source.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi)];
+  if (matches.length === 0) return 0;
+
+  const internalHost = wpBaseHost();
+  if (!internalHost) return matches.length;
+
+  let count = 0;
+  for (const [, hrefRaw] of matches) {
+    const href = (hrefRaw || "").trim();
+    if (!href) continue;
+    if (href.startsWith("/")) {
+      count += 1;
+      continue;
+    }
+    try {
+      const url = new URL(href);
+      const host = (url.hostname || "").replace(/^www\./i, "").toLowerCase();
+      if (host === internalHost) count += 1;
+    } catch {
+      // Ignore malformed links in quality count.
+    }
+  }
+  return count;
+}
+
+function isInternalHref(href, internalHost) {
+  const value = (href || "").trim();
+  if (!value) return false;
+  if (value.startsWith("/")) return true;
+  if (!internalHost) return true;
+  try {
+    const url = new URL(value);
+    const host = (url.hostname || "").replace(/^www\./i, "").toLowerCase();
+    return host === internalHost;
+  } catch {
+    return false;
+  }
+}
+
+function removeExternalLinks(html) {
+  const source = html || "";
+  const internalHost = wpBaseHost();
+  return source.replace(
+    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (full, href, innerText) => {
+      if (isInternalHref(href, internalHost)) return full;
+      return innerText;
+    }
+  );
+}
+
+async function fetchInternalLinkTargetsCached(cacheKey, categoryId) {
+  if (internalLinkTargetsCache.has(cacheKey)) {
+    return internalLinkTargetsCache.get(cacheKey) || [];
+  }
+  const targets = await getRecentPostsForInternalLinks({
+    categoryId,
+    limit: INTERNAL_LINK_FETCH_LIMIT,
+  });
+  internalLinkTargetsCache.set(cacheKey, targets);
+  return targets;
+}
+
+async function loadInternalLinkTargets(categoryId) {
+  const scoped =
+    Number.isFinite(categoryId) && categoryId > 0
+      ? await fetchInternalLinkTargetsCached(`cat:${categoryId}`, categoryId)
+      : [];
+  const generic = await fetchInternalLinkTargetsCached("cat:all", null);
+  const byUrl = new Map();
+  for (const target of [...scoped, ...generic]) {
+    const url = (target?.url || "").trim();
+    const title = (target?.title || "").trim();
+    if (!url || !title) continue;
+    if (!byUrl.has(url)) byUrl.set(url, target);
+  }
+  return [...byUrl.values()];
+}
+
+async function addInternalLinks(article, categoryId) {
+  if (
+    !INTERNAL_LINKING_ENABLED ||
+    INTERNAL_LINK_MAX <= 0 ||
+    !article?.content_html
+  ) {
+    return 0;
+  }
+  try {
+    const targets = await loadInternalLinkTargets(categoryId);
+    if (targets.length === 0) return 0;
+    const { contentHtml, linkedCount } = addInternalLinksToHtml(
+      article.content_html,
+      {
+        articleTitle: article.title,
+        focusKeyword: article.focus_keyword,
+        targets,
+        maxLinks: INTERNAL_LINK_MAX,
+      }
+    );
+    if (linkedCount > 0) {
+      article.content_html = contentHtml;
+    }
+    return linkedCount;
+  } catch (err) {
+    console.warn("Internal linking skipped:", err.message);
+    return 0;
+  }
 }
 
 function ensureSeoFields(article, fallbackTitle = "") {
@@ -458,6 +601,12 @@ async function publishFromRssItem(item) {
     return false;
   }
 
+  const linkedCount = await addInternalLinks(article, item.categoryId);
+  if (linkedCount > 0) {
+    console.log(`Internal links added: ${linkedCount}`);
+  }
+  article.content_html = removeExternalLinks(article.content_html);
+
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article);
     if (issues.length > 0) {
@@ -494,6 +643,12 @@ async function publishFallbackArticle() {
       console.log("Sanitized content too short. Skipping fallback article.");
       continue;
     }
+
+    const linkedCount = await addInternalLinks(article, cat.id);
+    if (linkedCount > 0) {
+      console.log(`Fallback internal links added: ${linkedCount}`);
+    }
+    article.content_html = removeExternalLinks(article.content_html);
 
     if (STRICT_QUALITY_GATE) {
       const issues = qualityGateIssues(article);
