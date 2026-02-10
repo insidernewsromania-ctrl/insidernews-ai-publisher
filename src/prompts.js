@@ -32,6 +32,11 @@ SEO:
 - Un focus keyword relevant pentru subiect.
 - Include focus keyword natural în lead și într-un subtitlu H2.
 
+CONSISTENȚĂ FACTUALĂ (OBLIGATORIU):
+{{ROLE_CONSTRAINTS}}
+- Nu schimba funcțiile oficiale ale persoanelor.
+- Dacă funcția nu este clară, menționează doar numele, fără funcție.
+
 Returnează STRICT JSON (fără markdown):
 {
   "title": "",

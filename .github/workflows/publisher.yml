@@ -60,6 +60,8 @@ jobs:
           CATEGORY_SOURCE_BIAS: "2"
           CATEGORY_OVERRIDE_MARGIN: "2"
           CATEGORY_MIN_SCORE: "3"
+          ROLE_FACT_CHECK_ENABLED: "true"
+          ROLE_FACT_MAX_CLAIMS: "6"
           WP_PUBLISH_RETRIES: "3"
           WP_PUBLISH_RETRY_BASE_MS: "2500"
           AI_REWRITE_ATTEMPTS: "2"

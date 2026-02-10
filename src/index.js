@@ -11,6 +11,12 @@ import { addInternalLinksToHtml } from "./internal-links.js";
 import { downloadImage } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
 import {
+  buildRoleConstraintsFromClaims,
+  extractPersonRoleClaims,
+  findRoleMismatches,
+  formatRoleMismatchSummary,
+} from "./facts.js";
+import {
   cleanTitle,
   hoursSince,
   isStrongTitle,
@@ -217,6 +223,11 @@ const INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK =
   process.env.INTERNAL_LINK_ALLOW_CROSS_CATEGORY_FALLBACK === "true";
 const REQUIRE_INTERNAL_LINK = process.env.REQUIRE_INTERNAL_LINK === "true";
 const MIN_INTERNAL_LINKS = parsePositiveInt(process.env.MIN_INTERNAL_LINKS || "1", 1);
+const ROLE_FACT_CHECK_ENABLED = process.env.ROLE_FACT_CHECK_ENABLED !== "false";
+const ROLE_FACT_MAX_CLAIMS = parsePositiveInt(
+  process.env.ROLE_FACT_MAX_CLAIMS || "6",
+  6
+);
 const WP_PUBLISH_RETRIES = parsePositiveInt(process.env.WP_PUBLISH_RETRIES || "3", 3);
 const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
   process.env.WP_PUBLISH_RETRY_BASE_MS || "2500",
@@ -502,6 +513,28 @@ function resolveCategoryId(item, article) {
     scores,
     reason: "keyword_override",
   };
+}
+
+function buildSourceRoleClaims(item) {
+  const claimsFromTitle = extractPersonRoleClaims(item?.title || "", {
+    maxClaims: ROLE_FACT_MAX_CLAIMS,
+  });
+  if (claimsFromTitle.size > 0) return claimsFromTitle;
+
+  const fallbackText = `${item?.title || ""}\n${item?.content || ""}`.trim();
+  return extractPersonRoleClaims(fallbackText, {
+    maxClaims: ROLE_FACT_MAX_CLAIMS,
+  });
+}
+
+function roleMismatchSummary(item, article, sourceClaims) {
+  if (!(sourceClaims instanceof Map) || sourceClaims.size === 0) {
+    return [];
+  }
+  const generatedText = `${article?.title || ""}\n${stripHtml(
+    article?.content_html || ""
+  ).slice(0, 2500)}`;
+  return findRoleMismatches(sourceClaims, generatedText);
 }
 
 function containsNormalized(haystack, needle) {
@@ -962,13 +995,46 @@ async function publishFromRssItem(item) {
   }
 
   const raw = [item.title, item.content].filter(Boolean).join("\n\n");
-  const article = await rewriteNews(raw, item.title, {
+  const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
+    ? buildSourceRoleClaims(item)
+    : new Map();
+  const roleConstraints = buildRoleConstraintsFromClaims(sourceRoleClaims);
+
+  let article = await rewriteNews(raw, item.title, {
     publishedAt: item.publishedAt,
     source: item.source,
     link: item.link,
+    roleConstraints,
   });
 
   if (!article) return false;
+
+  if (ROLE_FACT_CHECK_ENABLED && sourceRoleClaims.size > 0) {
+    let mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+    if (mismatches.length > 0) {
+      console.log(
+        "Role mismatch detected, retrying strict factual mode:",
+        formatRoleMismatchSummary(mismatches)
+      );
+      article = await rewriteNews(raw, item.title, {
+        publishedAt: item.publishedAt,
+        source: item.source,
+        link: item.link,
+        roleConstraints,
+        strictRoleMode: true,
+      });
+      if (!article) return false;
+
+      mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+      if (mismatches.length > 0) {
+        console.log(
+          "Role mismatch persists. Skipping article:",
+          formatRoleMismatchSummary(mismatches)
+        );
+        return false;
+      }
+    }
+  }
 
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, item.title);

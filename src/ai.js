@@ -68,15 +68,29 @@ function keywordFromText(text) {
 }
 
 function buildPrompt(rawContent, originalTitle, meta, attempt) {
+  const roleConstraints = (meta?.roleConstraints || "")
+    .toString()
+    .trim() || "- Pastreaza functiile oficiale exact asa cum apar in sursa.";
+
   const base = NEWS_REWRITE_PROMPT
     .replace("{{TITLE}}", originalTitle || "")
     .replace("{{CONTENT}}", rawContent || "")
     .replace("{{PUBLISHED_AT}}", meta?.publishedAt || "")
     .replace("{{SOURCE}}", meta?.source || "")
     .replace("{{LINK}}", meta?.link || "")
+    .replace("{{ROLE_CONSTRAINTS}}", roleConstraints)
     .replace("{{MIN_WORDS}}", String(MIN_WORDS));
 
-  if (attempt <= 1) return base;
+  if (attempt <= 1 && !meta?.strictRoleMode) return base;
+
+  if (meta?.strictRoleMode) {
+    return `${base}
+
+ATENTIE CRITICA:
+- Exista risc de confuzie intre functiile oficiale (ex: premier vs primar).
+- Verifica explicit fiecare persoana mentionata si pastreaza functia corecta din sursa.
+- Daca nu esti sigur, elimina functia si pastreaza doar numele.`;
+  }
 
   return `${base}
 
