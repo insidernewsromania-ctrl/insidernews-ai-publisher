@@ -253,8 +253,8 @@ const PUBLISH_WINDOW_START_HOUR = parsePositiveInt(
   8
 );
 const PUBLISH_WINDOW_END_HOUR = parsePositiveInt(
-  process.env.PUBLISH_WINDOW_END_HOUR || "20",
-  20
+  process.env.PUBLISH_WINDOW_END_HOUR || "22",
+  22
 );
 const PUBLISH_WINDOW_TIMEZONE =
   process.env.PUBLISH_WINDOW_TIMEZONE || NEWS_TIMEZONE;
