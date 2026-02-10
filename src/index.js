@@ -2,6 +2,7 @@ import { collectNews } from "./rss.js";
 import { rewriteNews } from "./ai.js";
 import { generateArticle } from "./generator.js";
 import {
+  buildStablePostSlug,
   getRecentPostsForInternalLinks,
   publishPost,
   uploadImage,
@@ -1113,15 +1114,40 @@ async function maybeUploadImage(article) {
   return imageId;
 }
 
-async function publishPostWithRetry(article, categoryId, imageId) {
+async function publishPostWithRetry(
+  article,
+  categoryId,
+  imageId,
+  options = {}
+) {
   const maxAttempts = Math.max(1, WP_PUBLISH_RETRIES);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      await publishPost(article, categoryId, imageId);
+      await publishPost(article, categoryId, imageId, options);
       return true;
     } catch (err) {
       const retryable = isRetryablePublishError(err);
       const status = Number(err?.response?.status || 0);
+
+      if (retryable) {
+        try {
+          const duplicateAfterError = await isPostDuplicate({
+            title: article?.title || "",
+            seoTitle: article?.seo_title || "",
+            sourceUrl: options.sourceUrl || "",
+            slug: options.slug || "",
+          });
+          if (duplicateAfterError) {
+            console.warn(
+              "Publish returned retryable error, but post is already present. Skipping retry."
+            );
+            return true;
+          }
+        } catch (checkErr) {
+          console.warn("Post-error duplicate check failed:", checkErr.message);
+        }
+      }
+
       if (!retryable || attempt >= maxAttempts) {
         throw err;
       }
@@ -1143,21 +1169,23 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
     return false;
   }
 
+  const stableSlug = buildStablePostSlug(article, sourceUrl);
+
   if (!article.content_html || !hasMinimumContent(article.content_html)) {
     console.log("Content too short or missing. Skipping.");
     return false;
   }
 
   try {
-    const titlesToCheck = [article.title, article.seo_title]
-      .filter(Boolean)
-      .filter((value, index, self) => self.indexOf(value) === index);
-
-    for (const title of titlesToCheck) {
-      if (await isPostDuplicate(title)) {
-        console.log("Duplicate detected in WordPress. Skipping.");
-        return false;
-      }
+    const duplicate = await isPostDuplicate({
+      title: article.title,
+      seoTitle: article.seo_title,
+      sourceUrl,
+      slug: stableSlug,
+    });
+    if (duplicate) {
+      console.log("Duplicate detected in WordPress. Skipping.");
+      return false;
     }
   } catch (err) {
     console.warn("WP duplicate check failed:", err.message);
@@ -1171,7 +1199,10 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
   }
 
   try {
-    await publishPostWithRetry(article, categoryId, imageId);
+    await publishPostWithRetry(article, categoryId, imageId, {
+      sourceUrl,
+      slug: stableSlug,
+    });
   } catch (err) {
     console.error("Publish failed:", err.message);
     return false;

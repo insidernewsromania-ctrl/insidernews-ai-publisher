@@ -1,4 +1,5 @@
 import axios from "axios";
+import crypto from "crypto";
 import fs from "fs";
 import {
   normalizeText,
@@ -20,6 +21,54 @@ function wpBaseUrl() {
 
 function wpApi(path) {
   return `${wpBaseUrl()}/wp-json/wp/v2${path}`;
+}
+
+function canonicalSourceUrl(sourceUrl) {
+  if (!sourceUrl) return "";
+  try {
+    const parsed = new URL(sourceUrl);
+    return `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return `${sourceUrl}`.trim().toLowerCase();
+  }
+}
+
+function sourceSlug(sourceUrl) {
+  const canonical = canonicalSourceUrl(sourceUrl);
+  if (!canonical) return "";
+  const digest = crypto.createHash("sha1").update(canonical).digest("hex").slice(0, 16);
+  return `src-${digest}`;
+}
+
+function normalizeDuplicateInput(input) {
+  if (!input) {
+    return {
+      title: "",
+      seoTitle: "",
+      sourceUrl: "",
+      slug: "",
+    };
+  }
+  if (typeof input === "string") {
+    return {
+      title: input,
+      seoTitle: "",
+      sourceUrl: "",
+      slug: "",
+    };
+  }
+  return {
+    title: input.title || "",
+    seoTitle: input.seoTitle || "",
+    sourceUrl: input.sourceUrl || "",
+    slug: input.slug || "",
+  };
+}
+
+export function buildStablePostSlug(article = {}, sourceUrl = "") {
+  const fromSource = sourceSlug(sourceUrl);
+  if (fromSource) return fromSource;
+  return slugify(article?.seo_title || article?.title || "");
 }
 
 export async function uploadImage(options = {}) {
@@ -69,25 +118,46 @@ async function searchPostsByTitle(title) {
   return res.data || [];
 }
 
-export async function isPostDuplicate(title) {
-  if (!title) return false;
-  const slug = slugify(title);
-  if (slug) {
-    const existing = await findPostBySlug(slug);
+export async function isPostDuplicate(input) {
+  const {
+    title,
+    seoTitle,
+    sourceUrl,
+    slug,
+  } = normalizeDuplicateInput(input);
+
+  const slugCandidates = uniqueStrings([
+    slug,
+    sourceSlug(sourceUrl),
+    slugify(seoTitle),
+    slugify(title),
+  ]);
+
+  for (const slugCandidate of slugCandidates) {
+    if (!slugCandidate) continue;
+    const existing = await findPostBySlug(slugCandidate);
     if (existing) return true;
   }
-  const results = await searchPostsByTitle(title);
-  const normalized = normalizeText(title);
-  const tokens = normalized.split(" ").filter(Boolean);
-  const shortKey = tokens.slice(0, 6).join(" ");
-  const useShortKey = tokens.length >= 6;
-  return results.some(post => {
-    const rendered = post?.title?.rendered || "";
-    const postTitle = normalizeText(rendered);
-    if (postTitle === normalized) return true;
-    if (useShortKey && postTitle.startsWith(shortKey)) return true;
-    return false;
-  });
+
+  const titleCandidates = uniqueStrings([title, seoTitle]);
+  for (const titleCandidate of titleCandidates) {
+    if (!titleCandidate) continue;
+    const results = await searchPostsByTitle(titleCandidate);
+    const normalized = normalizeText(titleCandidate);
+    const tokens = normalized.split(" ").filter(Boolean);
+    const shortKey = tokens.slice(0, 6).join(" ");
+    const useShortKey = tokens.length >= 6;
+    const hasMatch = results.some(post => {
+      const rendered = post?.title?.rendered || "";
+      const postTitle = normalizeText(rendered);
+      if (postTitle === normalized) return true;
+      if (useShortKey && postTitle.startsWith(shortKey)) return true;
+      return false;
+    });
+    if (hasMatch) return true;
+  }
+
+  return false;
 }
 
 async function findTagByName(name) {
@@ -169,7 +239,7 @@ export async function getRecentPostsForInternalLinks(options = {}) {
   }
 }
 
-export async function publishPost(article, categoryId, imageId) {
+export async function publishPost(article, categoryId, imageId, options = {}) {
   const meta = {};
 
   if (article.focus_keyword) {
@@ -198,7 +268,8 @@ export async function publishPost(article, categoryId, imageId) {
     stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
   if (excerptSource) payload.excerpt = truncate(excerptSource, 160);
 
-  const slug = slugify(article.seo_title || article.title);
+  const slug =
+    options.slug || buildStablePostSlug(article, options.sourceUrl || "");
   if (slug) payload.slug = slug;
 
   const seoTags = uniqueStrings([
