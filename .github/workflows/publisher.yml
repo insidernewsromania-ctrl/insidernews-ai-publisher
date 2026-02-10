@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: insidernews-ai-publisher-main
+  group: insidernews-ai-publisher-main 
   cancel-in-progress: false
 
 jobs:
