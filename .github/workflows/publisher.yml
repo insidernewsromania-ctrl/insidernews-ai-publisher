@@ -30,6 +30,7 @@ jobs:
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: "gpt-4.1"
           WP_AUTHOR_ID: ${{ secrets.WP_AUTHOR_ID }}
           POSTS_PER_RUN: "1"
           PUBLISH_WINDOW_ENABLED: "true"
@@ -64,6 +65,11 @@ jobs:
           RIGHT_OF_REPLY_URL: ${{ vars.RIGHT_OF_REPLY_URL }}
           CORRECTIONS_EMAIL: ${{ vars.CORRECTIONS_EMAIL }}
           BLOCK_TABLOID_TITLES: "true"
+          TABLE_OF_CONTENTS_ENABLED: "true"
+          TABLE_OF_CONTENTS_TITLE: "Cuprins"
+          TABLE_OF_CONTENTS_MAX_ITEMS: "8"
+          TABLE_OF_CONTENTS_MIN_HEADINGS: "1"
+          TABLE_OF_CONTENTS_REQUIRED: "true"
           FORCE_CATEGORY_ID: "0"
           CATEGORY_OVERRIDE_ENABLED: "true"
           CATEGORY_SOURCE_BIAS: "2"

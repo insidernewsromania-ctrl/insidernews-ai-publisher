@@ -50,6 +50,7 @@ Exemplu minim:
 
 ```bash
 OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1
 WP_URL=https://insidernews.ro
 WP_USER=...
 WP_APP_PASSWORD=...
@@ -74,6 +75,11 @@ EDITORIAL_POLICY_URL=https://insidernews.ro/politica-editoriala
 RIGHT_OF_REPLY_URL=https://insidernews.ro/drept-la-replica
 CORRECTIONS_EMAIL=redactie@insidernews.ro
 BLOCK_TABLOID_TITLES=true
+TABLE_OF_CONTENTS_ENABLED=true
+TABLE_OF_CONTENTS_TITLE=Cuprins
+TABLE_OF_CONTENTS_MAX_ITEMS=8
+TABLE_OF_CONTENTS_MIN_HEADINGS=1
+TABLE_OF_CONTENTS_REQUIRED=true
 ```
 
 ## 5) Service + Timer (`systemd`)

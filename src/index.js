@@ -327,6 +327,19 @@ const CORRECTIONS_EMAIL = (process.env.CORRECTIONS_EMAIL || "")
   .toString()
   .trim();
 const BLOCK_TABLOID_TITLES = process.env.BLOCK_TABLOID_TITLES !== "false";
+const TABLE_OF_CONTENTS_ENABLED = process.env.TABLE_OF_CONTENTS_ENABLED !== "false";
+const TABLE_OF_CONTENTS_TITLE = (process.env.TABLE_OF_CONTENTS_TITLE || "Cuprins")
+  .toString()
+  .trim();
+const TABLE_OF_CONTENTS_MAX_ITEMS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MAX_ITEMS || "8",
+  8
+);
+const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MIN_HEADINGS || "1",
+  1
+);
+const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -843,6 +856,107 @@ function ensureH2WithKeyword(article) {
     article.content_html.slice(insertAt);
 }
 
+function headingSlugBase(text, fallback = "sectiune") {
+  const normalized = normalizeText(stripHtml(text || ""));
+  const slug = normalized
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return slug || fallback;
+}
+
+function uniqueHeadingId(base, usedIds) {
+  let id = base;
+  let i = 2;
+  while (usedIds.has(id)) {
+    id = `${base}-${i}`;
+    i += 1;
+  }
+  usedIds.add(id);
+  return id;
+}
+
+function hasTableOfContentsBlock(html) {
+  return /data-article-toc="true"/i.test(html || "");
+}
+
+function applyTableOfContents(article) {
+  if (!TABLE_OF_CONTENTS_ENABLED || !article?.content_html) return;
+  if (hasTableOfContentsBlock(article.content_html)) return;
+
+  const usedIds = new Set();
+  const headings = [];
+  let headingIndex = 0;
+
+  const updatedHtml = article.content_html.replace(
+    /<h2\b([^>]*)>([\s\S]*?)<\/h2>/gi,
+    (full, attrs = "", innerHtml = "") => {
+      const headingTextRaw = stripHtml(innerHtml).replace(/\s+/g, " ").trim();
+      if (!headingTextRaw) return full;
+
+      const idMatch = attrs.match(/\bid=["']([^"']+)["']/i);
+      let headingId = (idMatch?.[1] || "").trim();
+      const originalId = headingId;
+      if (headingId && usedIds.has(headingId)) {
+        headingId = "";
+      }
+      if (headingId) usedIds.add(headingId);
+      if (!headingId) {
+        const base = headingSlugBase(headingTextRaw, `sectiune-${headingIndex + 1}`);
+        headingId = uniqueHeadingId(base, usedIds);
+      }
+
+      headingIndex += 1;
+      const label = cleanTitle(headingTextRaw, 120) || headingTextRaw;
+      headings.push({
+        id: headingId,
+        label,
+      });
+
+      if (idMatch && headingId === originalId) return full;
+      const attrsWithoutId = attrs.replace(/\s*\bid=["'][^"']*["']/i, "");
+      return `<h2${attrsWithoutId} id="${escapeHtmlAttr(headingId)}">${innerHtml}</h2>`;
+    }
+  );
+
+  if (headings.length < TABLE_OF_CONTENTS_MIN_HEADINGS) {
+    article.content_html = updatedHtml;
+    return;
+  }
+
+  const tocItems = headings
+    .slice(0, TABLE_OF_CONTENTS_MAX_ITEMS)
+    .map(
+      heading =>
+        `<li><a href="#${escapeHtmlAttr(heading.id)}">${escapeHtmlText(heading.label)}</a></li>`
+    )
+    .join("\n");
+
+  if (!tocItems) {
+    article.content_html = updatedHtml;
+    return;
+  }
+
+  const tocTitle = TABLE_OF_CONTENTS_TITLE || "Cuprins";
+  const tocHtml = `<nav data-article-toc="true" aria-label="Cuprins articol">
+<p><strong>${escapeHtmlText(tocTitle)}</strong></p>
+<ul>
+${tocItems}
+</ul>
+</nav>`;
+
+  const closeP = updatedHtml.match(/<\/p>/i);
+  if (!closeP?.index && closeP?.index !== 0) {
+    article.content_html = `${tocHtml}\n${updatedHtml}`;
+    return;
+  }
+
+  const insertAt = closeP.index + closeP[0].length;
+  article.content_html =
+    `${updatedHtml.slice(0, insertAt)}\n${tocHtml}\n` + updatedHtml.slice(insertAt);
+}
+
 function isLowEditorialValueTitle(title) {
   const normalized = normalizeText(title || "");
   return LOW_EDITORIAL_VALUE_PATTERNS.some(pattern => pattern.test(normalized));
@@ -1024,6 +1138,13 @@ function qualityGateIssues(article, context = {}) {
   if (EDITORIAL_NOTE_ENABLED && !hasEditorialNoteBlock(article?.content_html || "")) {
     issues.push("missing_editorial_note");
   }
+  if (
+    TABLE_OF_CONTENTS_ENABLED &&
+    TABLE_OF_CONTENTS_REQUIRED &&
+    !hasTableOfContentsBlock(article?.content_html || "")
+  ) {
+    issues.push("missing_toc");
+  }
   return issues;
 }
 
@@ -1043,13 +1164,16 @@ function countInternalLinks(html) {
   if (matches.length === 0) return 0;
 
   const internalHost = wpBaseHost();
-  if (!internalHost) return matches.length;
-
   let count = 0;
   for (const [, hrefRaw] of matches) {
     const href = (hrefRaw || "").trim();
     if (!href) continue;
+    if (href.startsWith("#")) continue;
     if (href.startsWith("/")) {
+      count += 1;
+      continue;
+    }
+    if (!internalHost) {
       count += 1;
       continue;
     }
@@ -1067,6 +1191,7 @@ function countInternalLinks(html) {
 function isInternalHref(href, internalHost) {
   const value = (href || "").trim();
   if (!value) return false;
+  if (value.startsWith("#")) return true;
   if (value.startsWith("/")) return true;
   if (!internalHost) return true;
   try {
@@ -1492,6 +1617,7 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
+  applyTableOfContents(article);
   appendSourceAttribution(article, item);
   appendEditorialNote(article);
 
@@ -1540,6 +1666,7 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
+    applyTableOfContents(article);
     appendEditorialNote(article);
 
     if (STRICT_QUALITY_GATE) {

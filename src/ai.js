@@ -31,6 +31,7 @@ const MIN_WORDS = parsePositiveInt(AI_MIN_WORDS, 350);
 const REWRITE_ATTEMPTS = Math.min(parsePositiveInt(AI_REWRITE_ATTEMPTS, 2), 4);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function ensureHtml(text) {
   if (!text) return "";
@@ -145,9 +146,13 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
   for (let attempt = 1; attempt <= REWRITE_ATTEMPTS; attempt += 1) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-4.1-mini",
+        model: OPENAI_MODEL,
         messages: [
-          { role: "system", content: "Ești un jurnalist profesionist." },
+          {
+            role: "system",
+            content:
+              "Ești un jurnalist profesionist, riguros factual, precis și clar. Nu speculezi și nu inventezi date.",
+          },
           { role: "user", content: buildPrompt(rawContent, originalTitle, meta, attempt) },
         ],
         temperature: attempt === 1 ? 0.35 : 0.3,

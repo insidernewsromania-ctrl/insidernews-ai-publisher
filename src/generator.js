@@ -29,6 +29,7 @@ const MIN_WORDS = parsePositiveInt(FALLBACK_MIN_WORDS, 350);
 const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
@@ -140,12 +141,18 @@ REGULI:
 - NU prezenta evenimente vechi ca fiind actuale
 - NU scrie analize generale sau retrospective
 - Ton: știre de presă, factual, neutru
+- Stil profesionist, natural, fără cuvinte pompoase
+- Propoziții scurte și clare
+- Fără limbaj emoțional, fără umplutură și fără entuziasm fals
 - Evită formulări tabloid (ex.: „șoc”, „bombă”, „de necrezut”)
+- Nu ghici, nu inventa date, nu specula
+- Dacă o informație nu poate fi confirmată, spune explicit că nu poate fi confirmată
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
+- După lead, adaugă un paragraf scurt de context factual (de ce subiectul contează acum)
 - 2–4 paragrafe explicative
-- Subtitluri doar dacă sunt necesare
+- Include cel puțin 3 subtitluri H2 descriptive
 
 Categoria: ${category}
 
@@ -178,10 +185,14 @@ export async function generateArticle(category) {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
+        model: OPENAI_MODEL,
         temperature: attempt === 1 ? 0.35 : 0.3,
         messages: [
-          { role: "system", content: "Ești un jurnalist profesionist de actualitate." },
+          {
+            role: "system",
+            content:
+              "Ești un jurnalist profesionist de actualitate. Scrii precis, factual, fără speculații și fără exagerări.",
+          },
           { role: "user", content: buildPrompt(category, attempt) },
         ],
         max_tokens: 1800 + (attempt - 1) * 250,
