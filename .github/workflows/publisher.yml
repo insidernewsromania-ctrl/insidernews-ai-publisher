@@ -8,7 +8,7 @@ on:
 concurrency:
   group: insidernews-ai-publisher-main 
   cancel-in-progress: false
-
+ 
 jobs:
   publish:
     runs-on: ubuntu-latest
