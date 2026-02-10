@@ -7,11 +7,11 @@ import { isDuplicate, saveTopic } from "./history.js";
 import {
   cleanTitle,
   hoursSince,
+  isStrongTitle,
   isSameCalendarDay,
   isRecent,
   normalizeText,
   stripHtml,
-  truncate,
   truncateAtWord,
   uniqueStrings,
   wordCount,
@@ -50,6 +50,16 @@ const SEO_TITLE_MAX_CHARS = parsePositiveInt(
   process.env.SEO_TITLE_MAX_CHARS || "60",
   60
 );
+const META_DESCRIPTION_MIN_CHARS = parsePositiveInt(
+  process.env.META_DESCRIPTION_MIN_CHARS || "130",
+  130
+);
+const META_DESCRIPTION_MAX_CHARS = parsePositiveInt(
+  process.env.META_DESCRIPTION_MAX_CHARS || "160",
+  160
+);
+const MIN_LEAD_WORDS = parsePositiveInt(process.env.MIN_LEAD_WORDS || "18", 18);
+const STRICT_QUALITY_GATE = process.env.STRICT_QUALITY_GATE !== "false";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -66,26 +76,15 @@ const BREAKING_KEYWORDS = [
   "victime",
 ];
 
-const TITLE_END_STOPWORDS = new Set([
-  "si",
-  "sau",
-  "cu",
-  "de",
-  "din",
-  "la",
-  "in",
-  "pe",
-  "pentru",
-  "ca",
-  "iar",
-  "dar",
-  "ori",
-  "al",
-  "ale",
-  "a",
-  "un",
-  "o",
-]);
+const LOW_EDITORIAL_VALUE_PATTERNS = [
+  /^comunicat de presa\b/i,
+  /^publicitate\b/i,
+  /advertorial/i,
+  /\bhoroscop\b/i,
+  /\bcurs valutar\b/i,
+  /\bprogram tv\b/i,
+  /\brezultate loto\b/i,
+];
 
 function isBreakingTitle(title) {
   const normalized = normalizeText(title);
@@ -132,15 +131,105 @@ function keywordFromText(text, maxWords = 4) {
     .join(" ");
 }
 
-function hasStrongTitle(title) {
-  if (!title) return false;
-  const normalized = normalizeText(title);
-  const words = normalized.split(" ").filter(Boolean);
-  if (words.length < 5) return false;
-  if (/[,:;/-]$/.test(title.trim())) return false;
-  const last = words[words.length - 1];
-  if (TITLE_END_STOPWORDS.has(last)) return false;
-  return true;
+function containsNormalized(haystack, needle) {
+  const left = normalizeText(haystack || "");
+  const right = normalizeText(needle || "");
+  if (!left || !right) return false;
+  return left.includes(right);
+}
+
+function firstParagraphText(html) {
+  const source = html || "";
+  const match = source.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  const raw = match ? match[1] : source;
+  return stripHtml(raw).replace(/\s+/g, " ").trim();
+}
+
+function hasH2Heading(html) {
+  return /<h2\b[^>]*>/i.test(html || "");
+}
+
+function escapeHtmlText(text) {
+  return (text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function ensureH2WithKeyword(article) {
+  if (!article?.content_html || hasH2Heading(article.content_html)) return;
+  const headingText = cleanTitle(
+    article.focus_keyword || article.title || "Detalii",
+    80
+  );
+  if (!headingText) return;
+  const h2 = `<h2>${escapeHtmlText(headingText)}</h2>`;
+  const closeP = article.content_html.match(/<\/p>/i);
+  if (!closeP?.index && closeP?.index !== 0) {
+    article.content_html = `${h2}\n${article.content_html}`;
+    return;
+  }
+  const insertAt = closeP.index + closeP[0].length;
+  article.content_html =
+    `${article.content_html.slice(0, insertAt)}\n${h2}\n` +
+    article.content_html.slice(insertAt);
+}
+
+function isLowEditorialValueTitle(title) {
+  const normalized = normalizeText(title || "");
+  return LOW_EDITORIAL_VALUE_PATTERNS.some(pattern => pattern.test(normalized));
+}
+
+function buildMetaDescription(article) {
+  const lead = firstParagraphText(article?.content_html || "");
+  const body = stripHtml(article?.content_html || "").replace(/\s+/g, " ").trim();
+  let candidate = (lead || article?.meta_description || article?.title || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (article?.focus_keyword && !containsNormalized(candidate, article.focus_keyword)) {
+    candidate = `${article.focus_keyword}: ${candidate}`.trim();
+  }
+
+  if (candidate.length < META_DESCRIPTION_MIN_CHARS && body) {
+    candidate = `${candidate} ${body}`.replace(/\s+/g, " ").trim();
+  }
+
+  candidate = truncateAtWord(candidate, META_DESCRIPTION_MAX_CHARS);
+
+  if (candidate.length < META_DESCRIPTION_MIN_CHARS) {
+    const fallback = `${article?.title || ""}. ${lead || ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+    if (fallback.length > candidate.length) {
+      candidate = truncateAtWord(fallback, META_DESCRIPTION_MAX_CHARS);
+    }
+  }
+
+  return candidate;
+}
+
+function qualityGateIssues(article) {
+  const issues = [];
+  if (!isStrongTitle(article?.title || "")) issues.push("weak_title");
+  if (!hasH2Heading(article?.content_html || "")) issues.push("missing_h2");
+  const lead = firstParagraphText(article?.content_html || "");
+  if (wordCount(lead) < MIN_LEAD_WORDS) issues.push("lead_too_short");
+  const metaLength = (article?.meta_description || "").trim().length;
+  if (
+    metaLength < META_DESCRIPTION_MIN_CHARS ||
+    metaLength > META_DESCRIPTION_MAX_CHARS
+  ) {
+    issues.push("meta_description_length");
+  }
+  if (article?.focus_keyword) {
+    if (!containsNormalized(article.title, article.focus_keyword)) {
+      issues.push("keyword_not_in_title");
+    }
+  }
+  return issues;
 }
 
 function ensureSeoFields(article, fallbackTitle = "") {
@@ -148,9 +237,16 @@ function ensureSeoFields(article, fallbackTitle = "") {
 
   const baseTitle = article.title || fallbackTitle || "";
   article.title = cleanTitle(baseTitle, TITLE_MAX_CHARS);
+
   if (!article.focus_keyword) {
     article.focus_keyword = keywordFromText(baseTitle, 4);
   }
+  article.focus_keyword = cleanTitle(article.focus_keyword || "", 80);
+
+  if (!containsNormalized(article.title, article.focus_keyword)) {
+    article.focus_keyword = keywordFromText(article.title, 3);
+  }
+
   article.focus_keyword = truncateAtWord(article.focus_keyword || "", 80);
 
   const tags = Array.isArray(article.tags) ? article.tags : [];
@@ -166,14 +262,22 @@ function ensureSeoFields(article, fallbackTitle = "") {
     article.seo_title = article.title || baseTitle;
   }
   article.seo_title = cleanTitle(article.seo_title || baseTitle, SEO_TITLE_MAX_CHARS);
-
-  if (!article.meta_description) {
-    const raw = stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
-    article.meta_description = truncate(raw, 160);
-  } else {
-    article.meta_description = truncate(article.meta_description, 160);
+  if (!containsNormalized(article.seo_title, article.focus_keyword)) {
+    article.seo_title = cleanTitle(article.title, SEO_TITLE_MAX_CHARS);
   }
 
+  article.meta_description = truncateAtWord(
+    (article.meta_description || "").replace(/\s+/g, " ").trim(),
+    META_DESCRIPTION_MAX_CHARS
+  );
+  if (
+    !article.meta_description ||
+    article.meta_description.length < META_DESCRIPTION_MIN_CHARS
+  ) {
+    article.meta_description = buildMetaDescription(article);
+  }
+
+  ensureH2WithKeyword(article);
   return article;
 }
 
@@ -203,6 +307,7 @@ function isRecentEnough(item) {
 
 function isValidCandidate(item) {
   if (!item?.title) return false;
+  if (isLowEditorialValueTitle(item.title)) return false;
   if (!isRecentEnough(item)) return false;
   const combined = `${item.title} ${item.content || ""}`;
   // Heuristica pe an e utilă doar când feed-ul nu oferă o dată clară.
@@ -212,6 +317,7 @@ function isValidCandidate(item) {
 
 function candidateRejectionReason(item) {
   if (!item?.title) return "missing_title";
+  if (isLowEditorialValueTitle(item.title)) return "low_editorial_value_title";
   if (!isRecentEnough(item)) {
     if (!item?.publishedAt) return "missing_published_at";
     return "not_same_day_or_not_recent";
@@ -334,9 +440,9 @@ async function publishFromRssItem(item) {
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, item.title);
 
-  if (!hasStrongTitle(article.title)) {
+  if (!isStrongTitle(article.title)) {
     const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
-    if (!hasStrongTitle(fallbackTitle)) {
+    if (!isStrongTitle(fallbackTitle)) {
       console.log("Title quality too low. Skipping.");
       return false;
     }
@@ -350,6 +456,14 @@ async function publishFromRssItem(item) {
   if (!hasMinimumContent(article.content_html)) {
     console.log("Sanitized content too short. Skipping.");
     return false;
+  }
+
+  if (STRICT_QUALITY_GATE) {
+    const issues = qualityGateIssues(article);
+    if (issues.length > 0) {
+      console.log("Quality gate failed:", issues.join(", "));
+      return false;
+    }
   }
 
   return tryPublishArticle(article, item.categoryId, item.link);
@@ -371,7 +485,7 @@ async function publishFallbackArticle() {
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
 
-    if (!hasStrongTitle(article.title)) {
+    if (!isStrongTitle(article.title)) {
       console.log("Fallback title quality too low. Trying next category.");
       continue;
     }
@@ -379,6 +493,14 @@ async function publishFallbackArticle() {
     if (!hasMinimumContent(article.content_html)) {
       console.log("Sanitized content too short. Skipping fallback article.");
       continue;
+    }
+
+    if (STRICT_QUALITY_GATE) {
+      const issues = qualityGateIssues(article);
+      if (issues.length > 0) {
+        console.log("Fallback quality gate failed:", issues.join(", "));
+        continue;
+      }
     }
 
     const success = await tryPublishArticle(article, cat.id, null);

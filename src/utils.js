@@ -67,6 +67,108 @@ const TITLE_END_STOPWORDS = new Set([
   "o",
 ]);
 
+const INCOMPLETE_CONNECTOR_SEQUENCES = [
+  ["in", "timp", "ce"],
+  ["dupa", "ce"],
+  ["pe", "cand"],
+  ["pentru", "ca"],
+  ["deoarece"],
+  ["fiindca"],
+  ["intrucat"],
+  ["in", "conditiile", "in", "care"],
+  ["in", "contextul", "in", "care"],
+];
+
+const PUBLISHER_SUFFIX_HINTS = [
+  "agerpres",
+  "mediafax",
+  "digi24",
+  "hotnews",
+  "g4media",
+  "stirileprotv",
+  "economica",
+  "spotmedia",
+  "observator",
+  "libertatea",
+  "adevarul",
+  "euronews",
+  "antena3",
+  "tvrinfo",
+  "wall street",
+  "startupcafe",
+  "profit",
+  "biziday",
+  "news ro",
+  "zf",
+  "google news",
+];
+
+function looksLikePublisherSuffix(text) {
+  if (!text) return false;
+  const normalized = normalizeText(text);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 6) return false;
+  if (
+    normalized.includes("news") ||
+    normalized.includes("stiri") ||
+    normalized.includes("tv") ||
+    normalized.includes("radio") ||
+    text.includes(".")
+  ) {
+    return true;
+  }
+  return PUBLISHER_SUFFIX_HINTS.some(hint => normalized.includes(hint));
+}
+
+function trimPublisherSuffix(text) {
+  const segments = (text || "")
+    .split(/\s[-–—|]\s/g)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) return text || "";
+  const suffix = segments[segments.length - 1];
+  if (!looksLikePublisherSuffix(suffix)) return text || "";
+  return segments.slice(0, -1).join(" - ").trim();
+}
+
+function hasWordSequenceAt(words, startIndex, sequence) {
+  if (startIndex < 0 || startIndex + sequence.length > words.length) return false;
+  for (let index = 0; index < sequence.length; index += 1) {
+    if (words[startIndex + index] !== sequence[index]) return false;
+  }
+  return true;
+}
+
+function getIncompleteEndingWordCount(normalizedText) {
+  const words = (normalizedText || "").split(" ").filter(Boolean);
+  if (words.length < 6) return 0;
+  for (const sequence of INCOMPLETE_CONNECTOR_SEQUENCES) {
+    for (let tail = 0; tail <= 2; tail += 1) {
+      const take = sequence.length + tail;
+      if (take >= words.length) continue;
+      const startIndex = words.length - take;
+      if (hasWordSequenceAt(words, startIndex, sequence)) {
+        return take;
+      }
+    }
+  }
+  return 0;
+}
+
+function trimIncompleteEnding(text) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  if (words.length < 6) return text || "";
+  const normalized = normalizeText(words.join(" "));
+  const removeCount = getIncompleteEndingWordCount(normalized);
+  if (removeCount <= 0) return text || "";
+  if (words.length - removeCount < 5) return text || "";
+  return words
+    .slice(0, words.length - removeCount)
+    .join(" ")
+    .replace(/[-–—:;,.!? ]+$/, "")
+    .trim();
+}
+
 function trimTrailingStopwords(text) {
   let current = text || "";
   for (let i = 0; i < 3; i += 1) {
@@ -83,7 +185,8 @@ function trimTrailingStopwords(text) {
 
 export function cleanTitle(text, maxLength = 110) {
   if (!text) return "";
-  const normalized = text
+  const withoutSuffix = trimPublisherSuffix(text.toString());
+  const normalized = withoutSuffix
     .toString()
     .replace(/\s+/g, " ")
     .replace(/\s+([,.;:!?])/g, "$1")
@@ -91,7 +194,27 @@ export function cleanTitle(text, maxLength = 110) {
     .replace(/^[-–—:;,.!? ]+/, "")
     .replace(/[-–—:;,.!? ]+$/, "");
   const truncated = truncateAtWord(normalized, maxLength);
-  return trimTrailingStopwords(truncated);
+  const trimmedStopwords = trimTrailingStopwords(truncated);
+  return trimTrailingStopwords(trimIncompleteEnding(trimmedStopwords));
+}
+
+export function hasSuspiciousTitleEnding(text) {
+  if (!text) return true;
+  const normalized = normalizeText(text);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 5) return true;
+  if (/[,:;/-]$/.test(text.trim())) return true;
+  const last = words[words.length - 1];
+  if (TITLE_END_STOPWORDS.has(last)) return true;
+  if (getIncompleteEndingWordCount(normalized) > 0) return true;
+  return false;
+}
+
+export function isStrongTitle(text, minWords = 5) {
+  const cleaned = cleanTitle(text || "", 170);
+  const words = normalizeText(cleaned).split(" ").filter(Boolean);
+  if (words.length < minWords) return false;
+  return !hasSuspiciousTitleEnding(cleaned);
 }
 
 export function extractJson(text) {

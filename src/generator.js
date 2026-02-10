@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import {
   cleanTitle,
   extractJson,
-  normalizeText,
+  isStrongTitle,
   stripHtml,
   truncate,
   truncateAtWord,
@@ -29,27 +29,6 @@ const MIN_WORDS = parsePositiveInt(FALLBACK_MIN_WORDS, 350);
 const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
-
-const TITLE_END_STOPWORDS = new Set([
-  "si",
-  "sau",
-  "cu",
-  "de",
-  "din",
-  "la",
-  "in",
-  "pe",
-  "pentru",
-  "ca",
-  "iar",
-  "dar",
-  "ori",
-  "al",
-  "ale",
-  "a",
-  "un",
-  "o",
-]);
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
@@ -92,17 +71,6 @@ function keywordFromText(text) {
     .filter(Boolean)
     .slice(0, 4)
     .join(" ");
-}
-
-function hasStrongTitle(title) {
-  if (!title) return false;
-  const normalized = normalizeText(title);
-  const words = normalized.split(" ").filter(Boolean);
-  if (words.length < 5) return false;
-  if (/[,:;/-]$/.test(title.trim())) return false;
-  const last = words[words.length - 1];
-  if (TITLE_END_STOPWORDS.has(last)) return false;
-  return true;
 }
 
 function normalizeArticle(data) {
@@ -193,10 +161,11 @@ Returnează STRICT JSON, fără markdown:
 REGULI OUTPUT:
 - title: max 110 caractere.
 - seo_title: max 60 caractere.
-- meta_description: max 160 caractere.
+- meta_description: între 130 și 160 caractere.
 - tags: 2–5 taguri, fără #.
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
+- Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Include focus keyword natural în lead și într-un subtitlu H2.
 - Minim ${MIN_WORDS} de cuvinte.
 ${extra}
@@ -230,7 +199,7 @@ export async function generateArticle(category) {
         continue;
       }
 
-      if (!hasStrongTitle(article.title)) {
+      if (!isStrongTitle(article.title)) {
         if (attempt < ATTEMPTS) {
           console.log("GENERATOR RETRY: titlu slab sau incomplet");
         } else {

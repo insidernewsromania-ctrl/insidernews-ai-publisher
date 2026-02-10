@@ -4,7 +4,7 @@ import { NEWS_REWRITE_PROMPT } from "./prompts.js";
 import {
   cleanTitle,
   extractJson,
-  normalizeText,
+  isStrongTitle,
   stripHtml,
   truncate,
   truncateAtWord,
@@ -31,27 +31,6 @@ const MIN_WORDS = parsePositiveInt(AI_MIN_WORDS, 350);
 const REWRITE_ATTEMPTS = Math.min(parsePositiveInt(AI_REWRITE_ATTEMPTS, 2), 4);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
-
-const TITLE_END_STOPWORDS = new Set([
-  "si",
-  "sau",
-  "cu",
-  "de",
-  "din",
-  "la",
-  "in",
-  "pe",
-  "pentru",
-  "ca",
-  "iar",
-  "dar",
-  "ori",
-  "al",
-  "ale",
-  "a",
-  "un",
-  "o",
-]);
 
 function ensureHtml(text) {
   if (!text) return "";
@@ -86,17 +65,6 @@ function keywordFromText(text) {
     .filter(Boolean)
     .slice(0, 4)
     .join(" ");
-}
-
-function hasStrongTitle(title) {
-  if (!title) return false;
-  const normalized = normalizeText(title);
-  const words = normalized.split(" ").filter(Boolean);
-  if (words.length < 5) return false;
-  if (/[,:;/-]$/.test(title.trim())) return false;
-  const last = words[words.length - 1];
-  if (TITLE_END_STOPWORDS.has(last)) return false;
-  return true;
 }
 
 function buildPrompt(rawContent, originalTitle, meta, attempt) {
@@ -191,9 +159,9 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
         continue;
       }
 
-      if (!hasStrongTitle(article.title)) {
+      if (!isStrongTitle(article.title)) {
         const fallbackTitle = cleanTitle(originalTitle, TITLE_MAX_CHARS);
-        if (hasStrongTitle(fallbackTitle)) {
+        if (isStrongTitle(fallbackTitle)) {
           article.title = fallbackTitle;
           article.seo_title = cleanTitle(
             article.seo_title || fallbackTitle,

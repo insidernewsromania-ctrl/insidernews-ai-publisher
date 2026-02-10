@@ -20,13 +20,14 @@ REGULI OBLIGATORII:
 STRUCTURĂ:
 - Titlu (H1) clar, informativ, fără clickbait fals.
 - Titlul trebuie să fie complet, coerent, fără final tăiat/trunchiat.
+- Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Lead (1 paragraf).
 - Corp articol cu H2/H3 unde e relevant.
 - Final deschis, informativ (fără concluzie explicită).
 
 SEO:
 - Titlu SEO max 60 caractere (derivat din H1).
-- Meta descriere max 160 caractere.
+- Meta descriere între 130 și 160 caractere.
 - 2–5 taguri relevante.
 - Un focus keyword relevant pentru subiect.
 - Include focus keyword natural în lead și într-un subtitlu H2.
@@ -44,7 +45,7 @@ Returnează STRICT JSON (fără markdown):
 REGULI OUTPUT:
 - title: max 110 caractere.
 - seo_title: max 60 caractere.
-- meta_description: max 160 caractere.
+- meta_description: între 130 și 160 caractere.
 - tags: 2–5 taguri, fără #.
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 
