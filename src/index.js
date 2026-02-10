@@ -66,6 +66,17 @@ const META_DESCRIPTION_MAX_CHARS = parsePositiveInt(
 );
 const MIN_LEAD_WORDS = parsePositiveInt(process.env.MIN_LEAD_WORDS || "18", 18);
 const STRICT_QUALITY_GATE = process.env.STRICT_QUALITY_GATE !== "false";
+const PUBLISH_WINDOW_ENABLED = process.env.PUBLISH_WINDOW_ENABLED !== "false";
+const PUBLISH_WINDOW_START_HOUR = parsePositiveInt(
+  process.env.PUBLISH_WINDOW_START_HOUR || "8",
+  8
+);
+const PUBLISH_WINDOW_END_HOUR = parsePositiveInt(
+  process.env.PUBLISH_WINDOW_END_HOUR || "20",
+  20
+);
+const PUBLISH_WINDOW_TIMEZONE =
+  process.env.PUBLISH_WINDOW_TIMEZONE || NEWS_TIMEZONE;
 const INTERNAL_LINKING_ENABLED = process.env.INTERNAL_LINKING_ENABLED !== "false";
 const INTERNAL_LINK_MAX = parsePositiveInt(process.env.INTERNAL_LINK_MAX || "3", 3);
 const INTERNAL_LINK_FETCH_LIMIT = parsePositiveInt(
@@ -74,6 +85,11 @@ const INTERNAL_LINK_FETCH_LIMIT = parsePositiveInt(
 );
 const REQUIRE_INTERNAL_LINK = process.env.REQUIRE_INTERNAL_LINK === "true";
 const MIN_INTERNAL_LINKS = parsePositiveInt(process.env.MIN_INTERNAL_LINKS || "1", 1);
+const WP_PUBLISH_RETRIES = parsePositiveInt(process.env.WP_PUBLISH_RETRIES || "3", 3);
+const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
+  process.env.WP_PUBLISH_RETRY_BASE_MS || "2500",
+  2500
+);
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -101,6 +117,90 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
 ];
 
 const internalLinkTargetsCache = new Map();
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryablePublishError(err) {
+  const status = Number(err?.response?.status || 0);
+  if (status === 429) return true;
+  if (status >= 500 && status <= 599) return true;
+  const code = `${err?.code || ""}`.toUpperCase();
+  if (["ECONNRESET", "ETIMEDOUT", "ECONNABORTED", "EAI_AGAIN"].includes(code)) {
+    return true;
+  }
+  return false;
+}
+
+function clampHour(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(23, Math.max(0, Math.floor(value)));
+}
+
+function localTimeParts(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(date);
+    const get = type => Number(parts.find(part => part.type === type)?.value || "0");
+    return {
+      hour: get("hour"),
+      minute: get("minute"),
+      second: get("second"),
+    };
+  } catch {
+    return {
+      hour: date.getUTCHours(),
+      minute: date.getUTCMinutes(),
+      second: date.getUTCSeconds(),
+    };
+  }
+}
+
+function localTimeLabel(date, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("ro-RO", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function isWithinPublishWindow(date = new Date()) {
+  if (!PUBLISH_WINDOW_ENABLED) return true;
+
+  const start = clampHour(PUBLISH_WINDOW_START_HOUR);
+  const end = clampHour(PUBLISH_WINDOW_END_HOUR);
+  if (start === end) return true;
+
+  const { hour, minute } = localTimeParts(date, PUBLISH_WINDOW_TIMEZONE);
+  const inNormalRange = start < end;
+
+  if (inNormalRange) {
+    if (hour < start || hour > end) return false;
+    if (hour === end) return minute === 0;
+    return true;
+  }
+
+  // Fereastră care trece peste miezul nopții.
+  if (hour > end && hour < start) return false;
+  if (hour === end) return minute === 0;
+  return true;
+}
 
 function isBreakingTitle(title) {
   const normalized = normalizeText(title);
@@ -520,6 +620,30 @@ async function maybeUploadImage(article) {
   return imageId;
 }
 
+async function publishPostWithRetry(article, categoryId, imageId) {
+  const maxAttempts = Math.max(1, WP_PUBLISH_RETRIES);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await publishPost(article, categoryId, imageId);
+      return true;
+    } catch (err) {
+      const retryable = isRetryablePublishError(err);
+      const status = Number(err?.response?.status || 0);
+      if (!retryable || attempt >= maxAttempts) {
+        throw err;
+      }
+      const waitMs = WP_PUBLISH_RETRY_BASE_MS * 2 ** (attempt - 1);
+      console.warn(
+        `Publish retry ${attempt}/${maxAttempts} after ${
+          status || err.code || "error"
+        }; waiting ${waitMs}ms`
+      );
+      await sleep(waitMs);
+    }
+  }
+  return false;
+}
+
 async function tryPublishArticle(article, categoryId, sourceUrl) {
   if (isDuplicate({ title: article.title, url: sourceUrl })) {
     console.log("Duplicate detected in history. Skipping.");
@@ -554,7 +678,7 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
   }
 
   try {
-    await publishPost(article, categoryId, imageId);
+    await publishPostWithRetry(article, categoryId, imageId);
   } catch (err) {
     console.error("Publish failed:", err.message);
     return false;
@@ -667,6 +791,16 @@ async function publishFallbackArticle() {
 
 async function run() {
   console.log("START SCRIPT – auto publish");
+
+  if (!isWithinPublishWindow(new Date())) {
+    const nowLabel = localTimeLabel(new Date(), PUBLISH_WINDOW_TIMEZONE);
+    console.log(
+      `Outside publish window ${clampHour(PUBLISH_WINDOW_START_HOUR)}:00-${clampHour(
+        PUBLISH_WINDOW_END_HOUR
+      )}:00 (${PUBLISH_WINDOW_TIMEZONE}). Local time: ${nowLabel}. Skipping run.`
+    );
+    process.exit(0);
+  }
 
   const postsTarget = Number.isFinite(POSTS_PER_RUN) && POSTS_PER_RUN > 0
     ? POSTS_PER_RUN
