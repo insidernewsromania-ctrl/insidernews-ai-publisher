@@ -181,6 +181,12 @@ npm install
 schtasks /Run /TN "InsiderNews Publisher"
 ```
 
+Varianta mai simpla (1 comanda):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Apps\insidernews-ai-publisher\scripts\windows\update-app.ps1" -ProjectRoot "C:\Apps\insidernews-ai-publisher" -RunAfterUpdate
+```
+
 ---
 
 ## 9) Troubleshooting rapid
@@ -221,4 +227,20 @@ Daca si testul draft da 403:
 
 ### Nu vrei suprapunere de procese
 - scriptul are deja lock global (`Global\InsiderNewsPublisherLock`)
+
+### Eroare PowerShell `Copy-Item ... PathNotFound`
+- inseamna ca fisierul template nu exista local (de obicei repo neactualizat)
+- ruleaza:
+
+```powershell
+Set-Location "C:\Apps\insidernews-ai-publisher"
+git pull origin main
+```
+
+- apoi repeta copierea:
+
+```powershell
+Copy-Item "C:\Apps\insidernews-ai-publisher\scripts\windows\publisher.env.ps1.example" `
+          "C:\Apps\insidernews-ai-publisher\config\publisher.env.ps1" -Force
+```
 

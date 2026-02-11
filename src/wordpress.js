@@ -41,11 +41,29 @@ function canonicalSourceUrl(sourceUrl) {
   }
 }
 
-function sourceSlug(sourceUrl) {
+function sourceHash(sourceUrl) {
   const canonical = canonicalSourceUrl(sourceUrl);
   if (!canonical) return "";
-  const digest = crypto.createHash("sha1").update(canonical).digest("hex").slice(0, 16);
-  return `src-${digest}`;
+  return crypto.createHash("sha1").update(canonical).digest("hex").slice(0, 12);
+}
+
+function legacySourceSlugByHash(hash) {
+  if (!hash) return "";
+  return `src-${hash}`;
+}
+
+function slugWithHash(baseText, hash) {
+  if (!hash) return "";
+  const base = slugify(baseText || "", 120);
+  if (!base) return "";
+  return `${base}-${hash}`.replace(/-+$/, "");
+}
+
+function sourceSlug(sourceUrl, preferredTitle = "") {
+  const hash = sourceHash(sourceUrl);
+  if (!hash) return "";
+  const readable = slugWithHash(preferredTitle, hash);
+  return readable || legacySourceSlugByHash(hash);
 }
 
 function normalizeDuplicateInput(input) {
@@ -53,6 +71,7 @@ function normalizeDuplicateInput(input) {
     return {
       title: "",
       seoTitle: "",
+      sourceTitle: "",
       sourceUrl: "",
       slug: "",
     };
@@ -61,6 +80,7 @@ function normalizeDuplicateInput(input) {
     return {
       title: input,
       seoTitle: "",
+      sourceTitle: "",
       sourceUrl: "",
       slug: "",
     };
@@ -68,13 +88,17 @@ function normalizeDuplicateInput(input) {
   return {
     title: input.title || "",
     seoTitle: input.seoTitle || "",
+    sourceTitle: input.sourceTitle || "",
     sourceUrl: input.sourceUrl || "",
     slug: input.slug || "",
   };
 }
 
-export function buildStablePostSlug(article = {}, sourceUrl = "") {
-  const fromSource = sourceSlug(sourceUrl);
+export function buildStablePostSlug(article = {}, sourceUrl = "", sourceTitle = "") {
+  const fromSource = sourceSlug(
+    sourceUrl,
+    sourceTitle || article?.seo_title || article?.title || ""
+  );
   if (fromSource) return fromSource;
   return slugify(article?.seo_title || article?.title || "");
 }
@@ -126,17 +150,43 @@ async function searchPostsByTitle(title) {
   return res.data || [];
 }
 
+async function hasRecentPostWithSourceHash(hash) {
+  if (!hash) return false;
+  const params = new URLSearchParams({
+    per_page: "30",
+    orderby: "date",
+    order: "desc",
+    _fields: "id,slug",
+  });
+  const res = await axios.get(wpApi(`/posts?${params.toString()}`), { auth });
+  const legacy = legacySourceSlugByHash(hash);
+  return (res.data || []).some(post => {
+    const slug = `${post?.slug || ""}`.trim().toLowerCase();
+    if (!slug) return false;
+    if (slug === legacy) return true;
+    return slug.endsWith(`-${hash}`);
+  });
+}
+
 export async function isPostDuplicate(input) {
   const {
     title,
     seoTitle,
+    sourceTitle,
     sourceUrl,
     slug,
   } = normalizeDuplicateInput(input);
 
+  const sourceHashValue = sourceHash(sourceUrl);
+
   const slugCandidates = uniqueStrings([
     slug,
-    sourceSlug(sourceUrl),
+    sourceSlug(sourceUrl, sourceTitle || seoTitle || title),
+    sourceSlug(sourceUrl, sourceTitle),
+    legacySourceSlugByHash(sourceHashValue),
+    slugWithHash(sourceTitle, sourceHashValue),
+    slugWithHash(seoTitle, sourceHashValue),
+    slugWithHash(title, sourceHashValue),
     slugify(seoTitle),
     slugify(title),
   ]);
@@ -145,6 +195,11 @@ export async function isPostDuplicate(input) {
     if (!slugCandidate) continue;
     const existing = await findPostBySlug(slugCandidate);
     if (existing) return true;
+  }
+
+  if (sourceHashValue) {
+    const hashMatch = await hasRecentPostWithSourceHash(sourceHashValue);
+    if (hashMatch) return true;
   }
 
   const titleCandidates = uniqueStrings([title, seoTitle]);
@@ -280,7 +335,8 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
   if (excerptSource) payload.excerpt = truncate(excerptSource, 160);
 
   const slug =
-    options.slug || buildStablePostSlug(article, options.sourceUrl || "");
+    options.slug ||
+    buildStablePostSlug(article, options.sourceUrl || "", options.sourceTitle || "");
   if (slug) payload.slug = slug;
 
   const seoTags = uniqueStrings([

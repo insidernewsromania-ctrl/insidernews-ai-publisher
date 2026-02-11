@@ -1447,6 +1447,7 @@ async function publishPostWithRetry(
           const duplicateAfterError = await isPostDuplicate({
             title: article?.title || "",
             seoTitle: article?.seo_title || "",
+            sourceTitle: options.sourceTitle || "",
             sourceUrl: options.sourceUrl || "",
             slug: options.slug || "",
           });
@@ -1476,13 +1477,13 @@ async function publishPostWithRetry(
   return false;
 }
 
-async function tryPublishArticle(article, categoryId, sourceUrl) {
+async function tryPublishArticle(article, categoryId, sourceUrl, sourceTitle = "") {
   if (isDuplicate({ title: article.title, url: sourceUrl })) {
     console.log("Duplicate detected in history. Skipping.");
     return false;
   }
 
-  const stableSlug = buildStablePostSlug(article, sourceUrl);
+  const stableSlug = buildStablePostSlug(article, sourceUrl, sourceTitle);
 
   if (!article.content_html || !hasMinimumContent(article.content_html)) {
     console.log("Content too short or missing. Skipping.");
@@ -1493,6 +1494,7 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
     const duplicate = await isPostDuplicate({
       title: article.title,
       seoTitle: article.seo_title,
+      sourceTitle,
       sourceUrl,
       slug: stableSlug,
     });
@@ -1514,6 +1516,7 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
   try {
     await publishPostWithRetry(article, categoryId, imageId, {
       sourceUrl,
+      sourceTitle,
       slug: stableSlug,
     });
   } catch (err) {
@@ -1631,7 +1634,7 @@ async function publishFromRssItem(item) {
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link);
+  return tryPublishArticle(article, targetCategoryId, item.link, item.title);
 }
 
 async function publishFallbackArticle() {
@@ -1679,7 +1682,7 @@ async function publishFallbackArticle() {
       }
     }
 
-    const success = await tryPublishArticle(article, targetCategoryId, null);
+    const success = await tryPublishArticle(article, targetCategoryId, null, article.title);
     if (success) return true;
   }
 
