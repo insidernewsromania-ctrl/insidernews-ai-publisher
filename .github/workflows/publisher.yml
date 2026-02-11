@@ -59,8 +59,8 @@ jobs:
           SOURCE_ATTRIBUTION_ENABLED: "true"
           SOURCE_ATTRIBUTION_REQUIRE_LINK: "true"
           EDITORIAL_NOTE_ENABLED: "true"
-          EDITORIAL_AUTHOR_NAME: "Redactia Insider News"
-          EDITORIAL_AUTHOR_PROFILE_URL: ${{ vars.EDITORIAL_AUTHOR_PROFILE_URL }}
+          EDITORIAL_AUTHOR_NAME: "Gabriel Andrei"
+          EDITORIAL_AUTHOR_PROFILE_URL: "https://insidernews.ro/author/gabriel/"
           EDITORIAL_POLICY_URL: ${{ vars.EDITORIAL_POLICY_URL }}
           RIGHT_OF_REPLY_URL: ${{ vars.RIGHT_OF_REPLY_URL }}
           CORRECTIONS_EMAIL: ${{ vars.CORRECTIONS_EMAIL }}

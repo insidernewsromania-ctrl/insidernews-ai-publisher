@@ -308,12 +308,12 @@ const SOURCE_ATTRIBUTION_REQUIRE_LINK =
   process.env.SOURCE_ATTRIBUTION_REQUIRE_LINK !== "false";
 const EDITORIAL_NOTE_ENABLED = process.env.EDITORIAL_NOTE_ENABLED !== "false";
 const EDITORIAL_AUTHOR_NAME = (
-  process.env.EDITORIAL_AUTHOR_NAME || "Redactia Insider News"
+  process.env.EDITORIAL_AUTHOR_NAME || "Gabriel Andrei"
 )
   .toString()
   .trim();
 const EDITORIAL_AUTHOR_PROFILE_URL = (
-  process.env.EDITORIAL_AUTHOR_PROFILE_URL || ""
+  process.env.EDITORIAL_AUTHOR_PROFILE_URL || "https://insidernews.ro/author/gabriel/"
 )
   .toString()
   .trim();
@@ -1031,7 +1031,7 @@ function appendEditorialNote(article) {
   if (!EDITORIAL_NOTE_ENABLED || !article?.content_html) return;
   if (hasEditorialNoteBlock(article.content_html)) return;
 
-  const authorName = EDITORIAL_AUTHOR_NAME || "Redactia Insider News";
+  const authorName = EDITORIAL_AUTHOR_NAME || "Gabriel Andrei";
   const authorProfileUrl = normalizedUrl(EDITORIAL_AUTHOR_PROFILE_URL);
   const policyUrl = normalizedUrl(EDITORIAL_POLICY_URL);
   const replyUrl = normalizedUrl(RIGHT_OF_REPLY_URL);
