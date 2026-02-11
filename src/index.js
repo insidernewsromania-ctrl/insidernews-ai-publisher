@@ -37,6 +37,7 @@ const categories = [
   { name: "economie", id: 4064 },
   { name: "externe", id: 4060 },
   { name: "sport", id: 821 },
+  { name: "auto", id: 4780 },
 ];
 const categoryById = new Map(categories.map(category => [category.id, category]));
 
@@ -208,6 +209,43 @@ const CATEGORY_KEYWORDS = {
       "campion",
     ],
   },
+  4780: {
+    strong: [
+      "auto",
+      "masina",
+      "masini",
+      "automobil",
+      "autoturism",
+      "dacia",
+      "renault",
+      "bmw",
+      "mercedes",
+      "audi",
+      "toyota",
+      "tesla",
+      "electrica",
+      "hibrid",
+      "service auto",
+      "itp",
+      "rovigneta",
+    ],
+    normal: [
+      "sofer",
+      "soferi",
+      "caroserie",
+      "motor",
+      "consum",
+      "asigurare rca",
+      "casco",
+      "anvelope",
+      "vulcanizare",
+      "inmatriculare",
+      "drumuri",
+      "trafic rutier",
+      "accident rutier",
+      "cod rutier",
+    ],
+  },
 };
 
 const POLITICS_DECISIVE_TERMS = [
@@ -255,6 +293,21 @@ const SPORT_DECISIVE_TERMS = [
   "jucator",
 ];
 
+const AUTO_DECISIVE_TERMS = [
+  "auto",
+  "masina",
+  "masini",
+  "automobil",
+  "dacia",
+  "bmw",
+  "mercedes",
+  "audi",
+  "toyota",
+  "tesla",
+  "sofer",
+  "cod rutier",
+];
+
 function parsePositiveInt(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -265,6 +318,26 @@ function parseNonNegativeInt(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.floor(parsed);
+}
+
+function parseHowToSlots(value) {
+  const raw = `${value || ""}`.trim();
+  if (!raw) return [];
+  const slots = raw
+    .split(",")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const match = part.match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) return null;
+      const hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+      return hour * 60 + minute;
+    })
+    .filter(valueMinute => Number.isFinite(valueMinute));
+  return [...new Set(slots)].sort((a, b) => a - b);
 }
 
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
@@ -402,6 +475,14 @@ const HOWTO_DAILY_POSTS_PER_RUN = parsePositiveInt(
 );
 const HOWTO_DAILY_TIMEZONE = process.env.HOWTO_DAILY_TIMEZONE || NEWS_TIMEZONE;
 const HOWTO_TOPIC_HINT = (process.env.HOWTO_TOPIC_HINT || "").toString().trim();
+const HOWTO_DAILY_SLOTS = parseHowToSlots(
+  process.env.HOWTO_DAILY_SLOTS || "10:15,18:15"
+);
+const HOWTO_SLOT_GRACE_MINUTES = parsePositiveInt(
+  process.env.HOWTO_SLOT_GRACE_MINUTES || "20",
+  20
+);
+const HOWTO_SLOT_STRICT = process.env.HOWTO_SLOT_STRICT !== "false";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -502,6 +583,19 @@ function localTimeLabel(date, timeZone) {
   } catch {
     return date.toISOString();
   }
+}
+
+function minutesOfDay(parts) {
+  const hour = Number(parts?.hour || 0);
+  const minute = Number(parts?.minute || 0);
+  return hour * 60 + minute;
+}
+
+function hhmmFromMinutes(totalMinutes) {
+  const safe = Math.max(0, Math.min(23 * 60 + 59, Math.floor(totalMinutes)));
+  const hour = Math.floor(safe / 60);
+  const minute = safe % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function isWithinPublishWindow(date = new Date()) {
@@ -834,6 +928,30 @@ function resolveCategoryId(item, article) {
         changed: false,
         scores,
         reason: "guard_sport_to_social",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4063 && bestId === 4780) {
+    const decisiveMatches = decisiveCategoryMatches(item, AUTO_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_social_to_auto",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4780 && bestId === 4063) {
+    const decisiveMatches = decisiveCategoryMatches(item, SOCIAL_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_auto_to_social",
       };
     }
   }
@@ -1797,8 +1915,47 @@ async function maybePublishHowToDaily() {
     return 0;
   }
 
+  const slots = HOWTO_DAILY_SLOTS.length > 0
+    ? HOWTO_DAILY_SLOTS
+    : parseHowToSlots("10:15,18:15");
+  const now = new Date();
+  const localNow = localTimeParts(now, HOWTO_DAILY_TIMEZONE);
+  const nowMinuteOfDay = minutesOfDay(localNow);
+
+  const openedSlotsCount = slots.filter(slotMinute => nowMinuteOfDay >= slotMinute).length;
+  if (openedSlotsCount === 0) {
+    console.log(
+      `HowTo waiting first slot (${slots.map(hhmmFromMinutes).join(", ")}) in ${HOWTO_DAILY_TIMEZONE}`
+    );
+    return 0;
+  }
+
+  const activeSlot = slots.find(slotMinute => {
+    const lower = slotMinute;
+    const upper = slotMinute + HOWTO_SLOT_GRACE_MINUTES;
+    return nowMinuteOfDay >= lower && nowMinuteOfDay <= upper;
+  });
+
+  if (HOWTO_SLOT_STRICT && !Number.isFinite(activeSlot)) {
+    console.log(
+      `HowTo slot closed now (${hhmmFromMinutes(nowMinuteOfDay)} ${HOWTO_DAILY_TIMEZONE}); slots: ${slots
+        .map(hhmmFromMinutes)
+        .join(", ")}`
+    );
+    return 0;
+  }
+
+  const allowedByNow = Math.min(HOWTO_DAILY_TARGET, openedSlotsCount);
+  const allowedRemaining = allowedByNow - todayCount;
+  if (allowedRemaining <= 0) {
+    console.log(
+      `HowTo already at allowed slot quota: ${todayCount}/${allowedByNow} now (${HOWTO_DAILY_TIMEZONE})`
+    );
+    return 0;
+  }
+
   const maxThisRun = Math.max(1, HOWTO_DAILY_POSTS_PER_RUN);
-  const remaining = HOWTO_DAILY_TARGET - todayCount;
+  const remaining = Math.min(HOWTO_DAILY_TARGET - todayCount, allowedRemaining);
   const toPublish = Math.min(remaining, maxThisRun);
   let published = 0;
 

@@ -237,6 +237,34 @@ export const ROMANIA_SOURCES = [
     maxPerRun: 1,
   },
   {
+    name: "Google News România – Auto",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=auto+Romania+masini&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4780, // Auto
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Promotor",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Apromotor.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4780,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – AutoMarket",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Aautomarket.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4780,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – 0-100 Auto",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3A0-100.ro+auto&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 4780,
+    maxPerRun: 1,
+  },
+  {
     name: "Google News – Profit.ro",
     type: "rss",
     url: "https://news.google.com/rss/search?q=site%3Aprofit.ro&hl=ro&gl=RO&ceid=RO:ro",
