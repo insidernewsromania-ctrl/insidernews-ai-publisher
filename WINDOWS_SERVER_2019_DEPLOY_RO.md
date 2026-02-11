@@ -93,7 +93,9 @@ Completeaza obligatoriu:
 - `WP_USER`
 - `WP_APP_PASSWORD`
 - `WP_DEFAULT_FEATURED_MEDIA_ID`
-- `WP_AUTHOR_ID` (daca ai autor in WordPress)
+- `WP_AUTHOR_ID`:
+  - pune `0` daca nu esti sigur
+  - foloseste un ID real doar daca userul WP are drept sa publice ca acel autor
 
 ---
 
@@ -186,6 +188,33 @@ schtasks /Run /TN "InsiderNews Publisher"
 ### Task ruleaza, dar nu publica
 - verifica ultimul log din `logs\`
 - daca vezi `Outside publish window ...`, inseamna ca task-ul e ok, dar e in afara ferestrei 08:00-22:00
+
+### Eroare `Publish failed: Request failed with status code 403`
+Cel mai des inseamna **permisiuni WordPress**:
+
+1. In `config\publisher.env.ps1`, seteaza temporar:
+   - `$env:WP_AUTHOR_ID = "0"`
+2. Ruleaza din nou manual scriptul.
+3. Daca merge, problema era `WP_AUTHOR_ID` (autor diferit fata de user fara permisiuni).
+
+Testeaza autentificarea API:
+
+```powershell
+$pair = "$env:WP_USER:$env:WP_APP_PASSWORD"
+$token = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+Invoke-RestMethod -Uri "$env:WP_URL/wp-json/wp/v2/users/me?context=edit" -Headers @{ Authorization = "Basic $token" }
+```
+
+Testeaza creare post draft:
+
+```powershell
+$body = @{ title = "API test"; content = "<p>ok</p>"; status = "draft" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:WP_URL/wp-json/wp/v2/posts" -Headers @{ Authorization = "Basic $token" } -ContentType "application/json" -Body $body
+```
+
+Daca si testul draft da 403:
+- userul WP nu are drept `publish_posts` / `edit_posts` pentru post type
+- sau un plugin de securitate/WAF blocheaza IP-ul serverului tau (whitelist pentru `/wp-json/wp/v2/*`)
 
 ### "node is not recognized"
 - reinstaleaza Node.js sau foloseste calea completa in script (ex: `C:\Program Files\nodejs\node.exe`)
