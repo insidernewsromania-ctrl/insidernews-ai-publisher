@@ -202,6 +202,41 @@ export const ROMANIA_SOURCES = [
     maxPerRun: 2,
   },
   {
+    name: "Google News România – Sport",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=sport+Romania&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 821, // Sport
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Gazeta Sporturilor",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Agsp.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 821,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Digi Sport",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Adigisport.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 821,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – ProSport",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Aprosport.ro&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 821,
+    maxPerRun: 2,
+  },
+  {
+    name: "Google News – Fanatik Sport",
+    type: "rss",
+    url: "https://news.google.com/rss/search?q=site%3Afanatik.ro+sport&hl=ro&gl=RO&ceid=RO:ro",
+    categoryId: 821,
+    maxPerRun: 1,
+  },
+  {
     name: "Google News – Profit.ro",
     type: "rss",
     url: "https://news.google.com/rss/search?q=site%3Aprofit.ro&hl=ro&gl=RO&ceid=RO:ro",

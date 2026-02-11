@@ -31,6 +31,36 @@ function wpApi(path) {
   return `${wpBaseUrl()}/wp-json/wp/v2${path}`;
 }
 
+function dayKeyInTimeZone(date, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function parseWpPostDate(post) {
+  const gmtRaw = `${post?.date_gmt || ""}`.trim();
+  if (gmtRaw && gmtRaw !== "0000-00-00T00:00:00") {
+    const gmtIso = gmtRaw.endsWith("Z") ? gmtRaw : `${gmtRaw}Z`;
+    const gmtDate = new Date(gmtIso);
+    if (!Number.isNaN(gmtDate.getTime())) return gmtDate;
+  }
+
+  const localRaw = `${post?.date || ""}`.trim();
+  if (localRaw) {
+    const localDate = new Date(localRaw);
+    if (!Number.isNaN(localDate.getTime())) return localDate;
+  }
+
+  return null;
+}
+
 function canonicalSourceUrl(sourceUrl) {
   if (!sourceUrl) return "";
   try {
@@ -298,6 +328,47 @@ export async function getRecentPostsForInternalLinks(options = {}) {
     } catch (err) {
       console.warn("INTERNAL LINKS FETCH ERROR:", err.message);
       return [];
+    }
+  }
+}
+
+export async function countPostsPublishedTodayByCategory(categoryId, options = {}) {
+  const category = Number(categoryId || 0);
+  if (!Number.isFinite(category) || category <= 0) return 0;
+
+  const timeZone = `${options.timeZone || "Europe/Bucharest"}`.trim() || "Europe/Bucharest";
+  const now = options.now instanceof Date ? options.now : new Date();
+  const todayKey = dayKeyInTimeZone(now, timeZone);
+
+  const params = new URLSearchParams({
+    per_page: "100",
+    orderby: "date",
+    order: "desc",
+    categories: String(category),
+    _fields: "id,status,date,date_gmt",
+  });
+
+  const requestPath = wpApi(`/posts?${params.toString()}`);
+
+  const toCount = posts =>
+    (posts || []).filter(post => {
+      const status = `${post?.status || "publish"}`.toLowerCase();
+      if (status !== "publish") return false;
+      const date = parseWpPostDate(post);
+      if (!date) return false;
+      return dayKeyInTimeZone(date, timeZone) === todayKey;
+    }).length;
+
+  try {
+    const res = await axios.get(requestPath, { auth });
+    return toCount(res.data);
+  } catch (authErr) {
+    try {
+      const res = await axios.get(requestPath);
+      return toCount(res.data);
+    } catch (err) {
+      console.warn("COUNT POSTS ERROR:", err.message);
+      return 0;
     }
   }
 }

@@ -1,8 +1,9 @@
 import { collectNews } from "./rss.js";
 import { rewriteNews } from "./ai.js";
-import { generateArticle } from "./generator.js";
+import { generateArticle, generateHowToArticle } from "./generator.js";
 import {
   buildStablePostSlug,
+  countPostsPublishedTodayByCategory,
   getRecentPostsForInternalLinks,
   publishPost,
   uploadImage,
@@ -35,6 +36,7 @@ const categories = [
   { name: "social", id: 4063 },
   { name: "economie", id: 4064 },
   { name: "externe", id: 4060 },
+  { name: "sport", id: 821 },
 ];
 const categoryById = new Map(categories.map(category => [category.id, category]));
 
@@ -102,7 +104,6 @@ const CATEGORY_KEYWORDS = {
       "vremea",
       "transport public",
       "consumator",
-      "sport",
       "turism",
       "cultura",
       "societate",
@@ -172,6 +173,41 @@ const CATEGORY_KEYWORDS = {
       "diplomatic",
     ],
   },
+  821: {
+    strong: [
+      "sport",
+      "fotbal",
+      "meci",
+      "campionat",
+      "liga 1",
+      "superliga",
+      "fcsb",
+      "dinamo",
+      "rapid",
+      "cfr cluj",
+      "simona halep",
+      "tenis",
+      "handbal",
+      "baschet",
+      "olimpiada",
+    ],
+    normal: [
+      "antrenor",
+      "jucator",
+      "transfer",
+      "scor",
+      "gol",
+      "stadion",
+      "arbitru",
+      "derby",
+      "cupa",
+      "finala",
+      "calificare",
+      "nationala",
+      "echipa",
+      "campion",
+    ],
+  },
 };
 
 const POLITICS_DECISIVE_TERMS = [
@@ -203,6 +239,20 @@ const SOCIAL_DECISIVE_TERMS = [
   "incendiu",
   "cutremur",
   "ghid",
+];
+
+const SPORT_DECISIVE_TERMS = [
+  "sport",
+  "fotbal",
+  "meci",
+  "campionat",
+  "liga 1",
+  "superliga",
+  "tenis",
+  "handbal",
+  "baschet",
+  "antrenor",
+  "jucator",
 ];
 
 function parsePositiveInt(value, fallback = 0) {
@@ -340,6 +390,18 @@ const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
   1
 );
 const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
+const HOWTO_DAILY_ENABLED = process.env.HOWTO_DAILY_ENABLED !== "false";
+const HOWTO_DAILY_CATEGORY_ID = parsePositiveInt(
+  process.env.HOWTO_DAILY_CATEGORY_ID || "6064",
+  6064
+);
+const HOWTO_DAILY_TARGET = parsePositiveInt(process.env.HOWTO_DAILY_TARGET || "2", 2);
+const HOWTO_DAILY_POSTS_PER_RUN = parsePositiveInt(
+  process.env.HOWTO_DAILY_POSTS_PER_RUN || "1",
+  1
+);
+const HOWTO_DAILY_TIMEZONE = process.env.HOWTO_DAILY_TIMEZONE || NEWS_TIMEZONE;
+const HOWTO_TOPIC_HINT = (process.env.HOWTO_TOPIC_HINT || "").toString().trim();
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -511,6 +573,7 @@ function keywordFromText(text, maxWords = 4) {
 
 function categoryNameById(categoryId) {
   if (categoryId === 7) return "ultimele_stiri";
+  if (categoryId === 6064) return "cum_sa";
   return categoryById.get(categoryId)?.name || `cat_${categoryId || "none"}`;
 }
 
@@ -747,6 +810,30 @@ function resolveCategoryId(item, article) {
         changed: false,
         scores,
         reason: "guard_politics_to_social",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4063 && bestId === 821) {
+    const decisiveMatches = decisiveCategoryMatches(item, SPORT_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_social_to_sport",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 821 && bestId === 4063) {
+    const decisiveMatches = decisiveCategoryMatches(item, SOCIAL_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_sport_to_social",
       };
     }
   }
@@ -1689,6 +1776,82 @@ async function publishFallbackArticle() {
   return false;
 }
 
+async function maybePublishHowToDaily() {
+  if (!HOWTO_DAILY_ENABLED) return 0;
+  if (HOWTO_DAILY_CATEGORY_ID <= 0 || HOWTO_DAILY_TARGET <= 0) return 0;
+
+  let todayCount = 0;
+  try {
+    todayCount = await countPostsPublishedTodayByCategory(HOWTO_DAILY_CATEGORY_ID, {
+      timeZone: HOWTO_DAILY_TIMEZONE,
+    });
+  } catch (err) {
+    console.warn("HowTo count failed:", err.message);
+    return 0;
+  }
+
+  if (todayCount >= HOWTO_DAILY_TARGET) {
+    console.log(
+      `HowTo quota reached: ${todayCount}/${HOWTO_DAILY_TARGET} for ${HOWTO_DAILY_TIMEZONE}`
+    );
+    return 0;
+  }
+
+  const maxThisRun = Math.max(1, HOWTO_DAILY_POSTS_PER_RUN);
+  const remaining = HOWTO_DAILY_TARGET - todayCount;
+  const toPublish = Math.min(remaining, maxThisRun);
+  let published = 0;
+
+  for (let i = 0; i < toPublish; i += 1) {
+    const article = await generateHowToArticle(HOWTO_TOPIC_HINT);
+    if (!article) break;
+
+    article.content_html = sanitizeContent(article.content_html);
+    ensureSeoFields(article, article.title);
+
+    if (!isStrongTitle(article.title)) {
+      console.log("HowTo title quality too low. Skipping.");
+      continue;
+    }
+
+    if (!hasMinimumContent(article.content_html)) {
+      console.log("HowTo content too short. Skipping.");
+      continue;
+    }
+
+    const linkedCount = await addInternalLinks(article, HOWTO_DAILY_CATEGORY_ID);
+    if (linkedCount > 0) {
+      console.log(`HowTo internal links added: ${linkedCount}`);
+    }
+    article.content_html = removeExternalLinks(article.content_html);
+    applyTableOfContents(article);
+    appendEditorialNote(article);
+
+    if (STRICT_QUALITY_GATE) {
+      const issues = qualityGateIssues(article, {
+        expectsSourceAttribution: false,
+      });
+      if (issues.length > 0) {
+        console.log("HowTo quality gate failed:", issues.join(", "));
+        continue;
+      }
+    }
+
+    const success = await tryPublishArticle(
+      article,
+      HOWTO_DAILY_CATEGORY_ID,
+      null,
+      article.title
+    );
+    if (success) {
+      published += 1;
+      todayCount += 1;
+    }
+  }
+
+  return published;
+}
+
 async function run() {
   console.log("START SCRIPT – auto publish");
 
@@ -1730,7 +1893,14 @@ async function run() {
     if (fallback) published += 1;
   }
 
-  console.log(`DONE – published ${published} article(s)`);
+  let howToPublished = 0;
+  if (HOWTO_DAILY_ENABLED) {
+    howToPublished = await maybePublishHowToDaily();
+  }
+
+  console.log(
+    `DONE – published ${published} news article(s) and ${howToPublished} how-to article(s)`
+  );
   process.exit(0);
 }
 

@@ -3,6 +3,7 @@ import {
   cleanTitle,
   extractJson,
   isStrongTitle,
+  normalizeText,
   stripHtml,
   truncate,
   truncateAtWord,
@@ -30,12 +31,32 @@ const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const HOWTO_MIN_WORDS = parsePositiveInt(
+  process.env.HOWTO_MIN_WORDS || process.env.MIN_WORDS || "350",
+  350
+);
+const HOWTO_ATTEMPTS = Math.min(parsePositiveInt(process.env.HOWTO_ATTEMPTS || "3", 3), 5);
+
+const HOWTO_TOPIC_SEEDS = [
+  "cum sa schimbi un bec in siguranta",
+  "cum sa faci paste cu sos alb",
+  "cum sa cureti masina de spalat",
+  "cum sa economisesti energie acasa",
+  "cum sa alegi un laptop pentru munca",
+  "cum sa iti organizezi bugetul lunar",
+  "cum sa pregatesti casa pentru iarna",
+  "cum sa iti optimizezi semnalul Wi-Fi",
+  "cum sa gatesti o friptura frageda",
+  "cum sa plantezi rosii in ghiveci",
+  "cum sa iti faci un CV bun",
+  "cum sa speli corect hainele albe",
+];
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
     day: "2-digit",
     month: "2-digit",
-    year: "numeric"
+    year: "numeric",
   });
 }
 
@@ -181,6 +202,73 @@ ${extra}
 `;
 }
 
+function randomHowToTopic(topicHint = "") {
+  const cleanHint = `${topicHint || ""}`.trim();
+  if (cleanHint) return cleanHint;
+  const index = Math.floor(Math.random() * HOWTO_TOPIC_SEEDS.length);
+  return HOWTO_TOPIC_SEEDS[index] || "cum sa faci o activitate practica de zi cu zi";
+}
+
+function buildHowToPrompt(topicHint, attempt) {
+  const topic = randomHowToTopic(topicHint);
+  const extra =
+    attempt > 1
+      ? `
+
+ATENȚIE:
+- Răspunsul anterior a fost prea scurt sau incomplet.
+- Respectă strict minimum ${HOWTO_MIN_WORDS} cuvinte.
+- Menține claritatea pașilor practici și verifică utilitatea informației.`
+      : "";
+
+  return `
+Ești jurnalist de utilitate publică. Scrii un ghid "Cum să?" în limba română.
+
+SUBIECT GHID:
+${topic}
+
+OBIECTIV:
+- Explică practic, clar și realist.
+- Textul trebuie să fie util unui cititor obișnuit.
+
+REGULI OBLIGATORII:
+- Ton profesionist, natural, fără limbaj pompos.
+- Propoziții scurte și clare.
+- Fără limbaj emoțional, fără exagerări.
+- Nu inventa date sau promisiuni.
+- Dacă există aspecte incerte sau care depind de context, spune clar limitele.
+
+STRUCTURĂ:
+- Titlu clar, de preferat începe cu "Cum să".
+- Lead scurt: ce va obține cititorul.
+- Minim 3 subtitluri H2.
+- Include pași numerotați sau explicați logic.
+- Include o secțiune scurtă "Greșeli frecvente" și una "Întrebări rapide".
+
+SEO:
+- title max 110 caractere
+- seo_title max 60 caractere
+- meta_description între 130 și 160 caractere
+- 2-5 taguri relevante
+- focus keyword natural în lead și într-un H2
+- minim ${HOWTO_MIN_WORDS} cuvinte
+
+Returnează STRICT JSON, fără markdown:
+{
+  "title": "",
+  "seo_title": "",
+  "meta_description": "",
+  "focus_keyword": "",
+  "tags": ["", ""],
+  "content_html": ""
+}
+
+REGULI OUTPUT:
+- content_html: doar HTML cu <p>, <h2>, <h3>, <strong>, <ul>, <ol>, <li>; fără H1.
+${extra}
+`;
+}
+
 export async function generateArticle(category) {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
@@ -235,6 +323,77 @@ export async function generateArticle(category) {
     } catch (err) {
       console.error(
         `GENERATOR ERROR (attempt ${attempt}/${ATTEMPTS}):`,
+        err.message
+      );
+    }
+  }
+
+  return null;
+}
+
+export async function generateHowToArticle(topicHint = "") {
+  for (let attempt = 1; attempt <= HOWTO_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        temperature: attempt === 1 ? 0.4 : 0.3,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Ești un jurnalist profesionist de ghiduri practice. Scrii clar, util și verificabil.",
+          },
+          { role: "user", content: buildHowToPrompt(topicHint, attempt) },
+        ],
+        max_tokens: 1900 + (attempt - 1) * 250,
+        response_format: { type: "json_object" },
+      });
+
+      const text = response.choices[0]?.message?.content;
+      const data = extractJson(text);
+      if (!data) {
+        console.log(`HOWTO ERROR: invalid JSON (attempt ${attempt}/${HOWTO_ATTEMPTS})`);
+        continue;
+      }
+
+      const article = normalizeArticle(data);
+      if (!article.title || !article.content_html) {
+        console.log(`HOWTO SKIP: articol incomplet (attempt ${attempt}/${HOWTO_ATTEMPTS})`);
+        continue;
+      }
+
+      if (!isStrongTitle(article.title)) {
+        if (attempt < HOWTO_ATTEMPTS) {
+          console.log("HOWTO RETRY: titlu slab sau incomplet");
+        } else {
+          console.log("HOWTO SKIP: titlu slab sau incomplet");
+        }
+        continue;
+      }
+
+      const titleNormalized = normalizeText(article.title);
+      if (titleNormalized && !titleNormalized.startsWith("cum sa")) {
+        const fixedTitle = cleanTitle(`Cum sa ${article.title}`, TITLE_MAX_CHARS);
+        if (fixedTitle) {
+          article.title = fixedTitle;
+          article.seo_title = cleanTitle(article.seo_title || fixedTitle, SEO_TITLE_MAX_CHARS);
+        }
+      }
+
+      const words = wordCount(article.content_html);
+      if (words < HOWTO_MIN_WORDS) {
+        if (attempt < HOWTO_ATTEMPTS) {
+          console.log(`HOWTO RETRY: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
+        } else {
+          console.log(`HOWTO SKIP: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
+        }
+        continue;
+      }
+
+      return article;
+    } catch (err) {
+      console.error(
+        `HOWTO ERROR (attempt ${attempt}/${HOWTO_ATTEMPTS}):`,
         err.message
       );
     }
