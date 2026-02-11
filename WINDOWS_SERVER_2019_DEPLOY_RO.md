@@ -187,6 +187,16 @@ Varianta mai simpla (1 comanda):
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Apps\insidernews-ai-publisher\scripts\windows\update-app.ps1" -ProjectRoot "C:\Apps\insidernews-ai-publisher" -RunAfterUpdate
 ```
 
+Daca `git` sau `npm` nu sunt in PATH, poti forta calea completa:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Apps\insidernews-ai-publisher\scripts\windows\update-app.ps1" `
+  -ProjectRoot "C:\Apps\insidernews-ai-publisher" `
+  -GitExe "C:\Program Files\Git\cmd\git.exe" `
+  -NpmExe "C:\Program Files\nodejs\npm.cmd" `
+  -RunAfterUpdate
+```
+
 ---
 
 ## 9) Troubleshooting rapid
@@ -224,6 +234,10 @@ Daca si testul draft da 403:
 
 ### "node is not recognized"
 - reinstaleaza Node.js sau foloseste calea completa in script (ex: `C:\Program Files\nodejs\node.exe`)
+
+### Eroare "git is not recognized"
+- instaleaza Git for Windows
+- sau ruleaza update-ul cu `-GitExe "C:\Program Files\Git\cmd\git.exe"` (vezi exemplul de mai sus)
 
 ### Nu vrei suprapunere de procese
 - scriptul are deja lock global (`Global\InsiderNewsPublisherLock`)
