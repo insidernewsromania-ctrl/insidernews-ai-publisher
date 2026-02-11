@@ -1,12 +1,39 @@
 param(
   [string]$ProjectRoot = "C:\Apps\insidernews-ai-publisher",
   [switch]$RunAfterUpdate,
+  [string]$Branch = "main",
   [string]$GitExe = "",
   [string]$NpmExe = ""
 )
 
 $ErrorActionPreference = "Stop"
 
+function Get-GitCandidatesFromGitHubDesktop {
+  $results = @()
+
+  $roots = @()
+  if ($env:LOCALAPPDATA) {
+    $roots += (Join-Path $env:LOCALAPPDATA "GitHubDesktop")
+  }
+
+  $userRoots = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "AppData\Local\GitHubDesktop" }
+  $roots += $userRoots
+
+  foreach ($root in ($roots | Select-Object -Unique)) {
+    if (-not (Test-Path $root)) { continue }
+    $apps = Get-ChildItem $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+      Sort-Object Name -Descending
+    foreach ($app in $apps) {
+      $candidate = Join-Path $app.FullName "resources\app\git\cmd\git.exe"
+      if (Test-Path $candidate) {
+        $results += $candidate
+      }
+    }
+  }
+
+  return ($results | Select-Object -Unique)
+}
 function Resolve-Executable {
   param(
     [string]$ProvidedPath,
@@ -38,23 +65,36 @@ if (-not (Test-Path $ProjectRoot)) {
 
 Set-Location $ProjectRoot
 
-$gitPath = Resolve-Executable -ProvidedPath $GitExe -CommandName "git" -Candidates @(
-  "C:\Program Files\Git\cmd\git.exe",
-  "C:\Program Files\Git\bin\git.exe",
-  "C:\Program Files (x86)\Git\cmd\git.exe",
-  "C:\Program Files (x86)\Git\bin\git.exe"
+$gitDesktopCandidates = Get-GitCandidatesFromGitHubDesktop
+$gitPath = Resolve-Executable -ProvidedPath $GitExe -CommandName "git" -Candidates (
+  @(
+    "C:\Program Files\Git\cmd\git.exe",
+    "C:\Program Files\Git\bin\git.exe",
+    "C:\Program Files (x86)\Git\cmd\git.exe",
+    "C:\Program Files (x86)\Git\bin\git.exe"
+  ) + $gitDesktopCandidates
 )
+if (-not (Test-Path $gitPath)) {
+  throw "Resolved git path does not exist: $gitPath"
+}
 
 $npmPath = Resolve-Executable -ProvidedPath $NpmExe -CommandName "npm" -Candidates @(
   "C:\Program Files\nodejs\npm.cmd",
   "C:\Program Files (x86)\nodejs\npm.cmd"
 )
+if (-not (Test-Path $npmPath)) {
+  throw "Resolved npm path does not exist: $npmPath"
+}
 
-Write-Host "===> Fetch origin/main"
-& $gitPath fetch origin main
+if (-not $Branch -or [string]::IsNullOrWhiteSpace($Branch)) {
+  $Branch = "main"
+}
 
-Write-Host "===> Pull origin/main"
-& $gitPath pull origin main
+Write-Host "===> Fetch origin/$Branch"
+& $gitPath fetch origin $Branch
+
+Write-Host "===> Pull origin/$Branch"
+& $gitPath pull origin $Branch
 
 Write-Host "===> Install/update dependencies"
 & $npmPath install
