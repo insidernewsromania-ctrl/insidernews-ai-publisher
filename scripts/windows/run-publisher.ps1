@@ -40,7 +40,18 @@ try {
   $startMsg = "[{0}] START node src/index.js" -f (Get-Date -Format "s")
   $startMsg | Tee-Object -FilePath $logFile
 
-  & $NodeExe "src/index.js" 2>&1 | Tee-Object -FilePath $logFile -Append
+  if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $global:PSNativeCommandUseErrorActionPreference = $false
+  }
+
+  $oldErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & $NodeExe "src/index.js" *>&1 | Tee-Object -FilePath $logFile -Append
+  }
+  finally {
+    $ErrorActionPreference = $oldErrorActionPreference
+  }
   $exitCode = if ($LASTEXITCODE -ne $null) { [int]$LASTEXITCODE } else { 0 }
 
   $endMsg = "[{0}] END exit={1}" -f (Get-Date -Format "s"), $exitCode

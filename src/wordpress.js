@@ -265,8 +265,17 @@ async function findTagByName(name) {
 }
 
 async function createTag(name) {
-  const res = await axios.post(wpApi("/tags"), { name }, { auth });
-  return res.data;
+  try {
+    const res = await axios.post(wpApi("/tags"), { name }, { auth });
+    return res.data;
+  } catch (err) {
+    const status = Number(err?.response?.status || 0);
+    const termId = Number(err?.response?.data?.data?.term_id || 0);
+    if (status === 400 && termId > 0) {
+      return { id: termId };
+    }
+    throw err;
+  }
 }
 
 async function resolveTagIds(tags) {
@@ -282,7 +291,7 @@ async function resolveTagIds(tags) {
       const created = await createTag(name);
       if (created?.id) ids.push(created.id);
     } catch (err) {
-      console.warn("TAG ERROR:", name, err.message);
+      console.log("TAG WARN:", name, err.message);
     }
   }
   return ids;
