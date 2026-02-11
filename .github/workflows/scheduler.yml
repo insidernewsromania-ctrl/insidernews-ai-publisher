@@ -2,7 +2,7 @@ name: InsiderNews Scheduler
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -16,16 +16,109 @@ permissions:
 jobs:
   trigger-publisher:
     runs-on: ubuntu-latest
+    env:
+      NEWS_TIMEZONE: "Europe/Bucharest"
+      PUBLISH_WINDOW_START_HOUR: "8"
+      PUBLISH_WINDOW_END_HOUR: "22"
+      SCHEDULE_GRACE_MINUTES: "5"
+      MIN_DISPATCH_INTERVAL_MINUTES: "10"
     steps:
       - name: Trigger publisher workflow on main
         uses: actions/github-script@v7
         with:
           script: |
             const workflowId = "publisher.yml";
+
+            function parsePositiveInt(value, fallback) {
+              const parsed = Number(value);
+              if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+              return Math.floor(parsed);
+            }
+
+            function localParts(date, timeZone) {
+              const parts = new Intl.DateTimeFormat("en-GB", {
+                timeZone,
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                hourCycle: "h23",
+              }).formatToParts(date);
+              const get = type => parts.find(part => part.type === type)?.value || "";
+              return {
+                year: get("year"),
+                month: get("month"),
+                day: get("day"),
+                hour: Number(get("hour") || "0"),
+                minute: Number(get("minute") || "0"),
+              };
+            }
+
+            const timezone = process.env.NEWS_TIMEZONE || "Europe/Bucharest";
+            const startHour = parsePositiveInt(process.env.PUBLISH_WINDOW_START_HOUR || "8", 8);
+            const endHour = parsePositiveInt(process.env.PUBLISH_WINDOW_END_HOUR || "22", 22);
+            const graceMinutes = Math.min(
+              10,
+              parsePositiveInt(process.env.SCHEDULE_GRACE_MINUTES || "5", 5)
+            );
+            const minDispatchIntervalMs =
+              parsePositiveInt(process.env.MIN_DISPATCH_INTERVAL_MINUTES || "10", 10) *
+              60 *
+              1000;
+
+            const now = new Date();
+            const nowLocal = localParts(now, timezone);
+
+            const inWindow =
+              startHour === endHour
+                ? true
+                : (nowLocal.hour > startHour || (nowLocal.hour === startHour && nowLocal.minute >= 0)) &&
+                  (nowLocal.hour < endHour || (nowLocal.hour === endHour && nowLocal.minute === 0));
+            if (!inWindow) {
+              core.info(
+                `Skip dispatch: outside ${startHour}:00-${endHour}:00 (${timezone}), local ${nowLocal.hour}:${String(nowLocal.minute).padStart(2, "0")}`
+              );
+              return;
+            }
+
+            if (context.eventName === "schedule") {
+              const quarterOffset = nowLocal.minute % 15;
+              if (quarterOffset > graceMinutes) {
+                core.info(
+                  `Skip dispatch: minute ${nowLocal.minute} not in quarter-hour grace (<=${graceMinutes})`
+                );
+                return;
+              }
+
+              const recentRuns = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflowId,
+                event: "workflow_dispatch",
+                per_page: 5,
+              });
+
+              const latest = recentRuns.data.workflow_runs?.[0];
+              if (latest?.created_at) {
+                const latestTs = new Date(latest.created_at).getTime();
+                if (Number.isFinite(latestTs) && Date.now() - latestTs < minDispatchIntervalMs) {
+                  core.info(
+                    `Skip dispatch: latest publisher run ${latest.id} is too recent (${latest.created_at})`
+                  );
+                  return;
+                }
+              }
+            } else {
+              core.info("Manual scheduler trigger: force dispatch enabled");
+            }
+
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: workflowId,
               ref: "main",
             });
-            core.info(`Triggered ${workflowId} on main`);
+            core.info(
+              `Triggered ${workflowId} on main at ${now.toISOString()} (${timezone} ${nowLocal.hour}:${String(nowLocal.minute).padStart(2, "0")})`
+            );
