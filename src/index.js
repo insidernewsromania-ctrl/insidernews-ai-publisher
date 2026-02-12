@@ -1289,6 +1289,7 @@ async function publishPostWithRetry(
           const duplicateAfterError = await isPostDuplicate({
             title: article?.title || "",
             seoTitle: article?.seo_title || "",
+            sourceTitle: options.sourceTitle || "",
             sourceUrl: options.sourceUrl || "",
             slug: options.slug || "",
           });
@@ -1318,8 +1319,8 @@ async function publishPostWithRetry(
   return false;
 }
 
-async function tryPublishArticle(article, categoryId, sourceUrl) {
-  if (isDuplicate({ title: article.title, url: sourceUrl })) {
+async function tryPublishArticle(article, categoryId, sourceUrl, sourceTitle = "") {
+  if (isDuplicate({ title: article.title, sourceTitle, url: sourceUrl })) {
     console.log("Duplicate detected in history. Skipping.");
     return false;
   }
@@ -1335,6 +1336,7 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
     const duplicate = await isPostDuplicate({
       title: article.title,
       seoTitle: article.seo_title,
+      sourceTitle,
       sourceUrl,
       slug: stableSlug,
     });
@@ -1355,6 +1357,7 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
 
   try {
     await publishPostWithRetry(article, categoryId, imageId, {
+      sourceTitle,
       sourceUrl,
       slug: stableSlug,
     });
@@ -1363,13 +1366,13 @@ async function tryPublishArticle(article, categoryId, sourceUrl) {
     return false;
   }
 
-  saveTopic({ title: article.title, url: sourceUrl });
+  saveTopic({ title: article.title, sourceTitle, url: sourceUrl });
   console.log("Published:", article.title);
   return true;
 }
 
 async function publishFromRssItem(item) {
-  if (isDuplicate({ title: item.title, url: item.link })) {
+  if (isDuplicate({ title: item.title, sourceTitle: item.title, url: item.link })) {
     console.log("Duplicate source item. Skipping:", item.title);
     return false;
   }
@@ -1488,7 +1491,7 @@ async function publishFromRssItem(item) {
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link);
+  return tryPublishArticle(article, targetCategoryId, item.link, item.title);
 }
 
 async function publishFallbackArticle() {
@@ -1536,7 +1539,7 @@ async function publishFallbackArticle() {
       }
     }
 
-    const success = await tryPublishArticle(article, targetCategoryId, null);
+    const success = await tryPublishArticle(article, targetCategoryId, null, article.title);
     if (success) return true;
   }
 

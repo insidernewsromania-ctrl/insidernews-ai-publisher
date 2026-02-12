@@ -6,7 +6,7 @@ import {
   EXTERNE_SOURCES,
   MIX,
 } from "./sources.js";
-import { normalizeText } from "./utils.js";
+import { buildTopicKey, normalizeText } from "./utils.js";
 
 const parser = new Parser({
   timeout: Number(process.env.RSS_TIMEOUT_MS || "15000"),
@@ -37,6 +37,13 @@ function buildItemKey(item) {
   const guidKey = `${item?.guid || ""}`.toString().trim().toLowerCase();
   if (!titleKey && !linkKey && !guidKey) return "";
   return hash(`${titleKey}|${linkKey}|${guidKey}`);
+}
+
+function buildTopicSignature(item) {
+  const titleTopic = buildTopicKey(item?.title || "");
+  if (titleTopic) return titleTopic;
+  const fallback = `${item?.title || ""} ${item?.content || ""}`.trim();
+  return buildTopicKey(fallback);
 }
 
 function shuffle(values) {
@@ -86,25 +93,28 @@ async function fetchSource(source) {
   }
 }
 
-function dedupe(items, seen = new Set()) {
+function dedupe(items, seen = new Set(), seenTopics = new Set()) {
   const output = [];
   for (const item of items) {
     const key = buildItemKey(item);
+    const topicSignature = buildTopicSignature(item);
     if (!key || seen.has(key)) continue;
+    if (topicSignature && seenTopics.has(topicSignature)) continue;
     seen.add(key);
+    if (topicSignature) seenTopics.add(topicSignature);
     output.push(item);
   }
   return output;
 }
 
-async function collectFromSources(sources, target, seen) {
+async function collectFromSources(sources, target, seen, seenTopics) {
   if (target <= 0 || sources.length === 0) return [];
   const ordered = shuffle(sources);
   const collected = [];
   for (const source of ordered) {
     collected.push(...(await fetchSource(source)));
   }
-  const unique = dedupe(collected, seen);
+  const unique = dedupe(collected, seen, seenTopics);
   return sortByRecency(unique).slice(0, target);
 }
 
@@ -113,18 +123,21 @@ export async function collectNews(limit) {
   if (target === 0) return [];
 
   const seen = new Set();
+  const seenTopics = new Set();
   const romaniaTarget = Math.round(target * MIX.romania);
   const externeTarget = Math.max(0, target - romaniaTarget);
 
   const romania = await collectFromSources(
     ROMANIA_SOURCES,
     romaniaTarget,
-    seen
+    seen,
+    seenTopics
   );
   const externe = await collectFromSources(
     EXTERNE_SOURCES,
     externeTarget,
-    seen
+    seen,
+    seenTopics
   );
 
   let combined = [...romania, ...externe];
@@ -133,7 +146,8 @@ export async function collectNews(limit) {
     const topUp = await collectFromSources(
       ROMANIA_SOURCES,
       target - combined.length,
-      seen
+      seen,
+      seenTopics
     );
     combined = [...combined, ...topUp];
   }

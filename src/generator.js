@@ -3,6 +3,7 @@ import {
   cleanTitle,
   extractJson,
   isStrongTitle,
+  normalizeText,
   stripHtml,
   truncate,
   truncateAtWord,
@@ -30,6 +31,12 @@ const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
+const HOWTO_DETAIL_MIN_WORDS = parsePositiveInt(
+  process.env.HOWTO_DETAIL_MIN_WORDS || "650",
+  650
+);
+const HOWTO_DETAIL_MIN_H2 = parsePositiveInt(process.env.HOWTO_DETAIL_MIN_H2 || "4", 4);
+const HOWTO_REQUIRE_STEP_HINTS = process.env.HOWTO_REQUIRE_STEP_HINTS !== "false";
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
@@ -116,16 +123,57 @@ function normalizeArticle(data) {
   return article;
 }
 
-function buildPrompt(category, attempt) {
+function isHowToCategory(category) {
+  const normalized = normalizeText(category || "");
+  return (
+    normalized.includes("cum sa") ||
+    normalized.includes("cumsa") ||
+    normalized.includes("ghid")
+  );
+}
+
+function requiredWordsForCategory(category) {
+  if (!isHowToCategory(category)) return MIN_WORDS;
+  return Math.max(MIN_WORDS, HOWTO_DETAIL_MIN_WORDS);
+}
+
+function countTagOccurrences(html, tagName) {
+  const source = html || "";
+  const regex = new RegExp(`<${tagName}\\b`, "gi");
+  const matches = source.match(regex);
+  return matches ? matches.length : 0;
+}
+
+function countStepHints(html) {
+  const normalized = normalizeText(stripHtml(html || ""));
+  if (!normalized) return 0;
+  const matches = normalized.match(/\bpas(?:ul|ii?)\b/g);
+  return matches ? matches.length : 0;
+}
+
+function buildPrompt(category, attempt, minWords) {
   const today = todayRO();
+  const howToMode = isHowToCategory(category);
   const extra =
     attempt > 1
       ? `
 
 ATENȚIE:
 - Răspunsul anterior a fost prea scurt sau incomplet.
-- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.`
+- Respectă strict minimum ${minWords} cuvinte în content_html.`
       : "";
+
+  const howToRules = howToMode
+    ? `
+
+CERINTE SUPLIMENTARE PENTRU CATEGORIA "Cum sa?":
+- Scrie un ghid practic, detaliat, pentru incepatori.
+- Include clar: materiale necesare, durata orientativa, cost orientativ, pasi de executie, verificare finala.
+- Fiecare pas trebuie explicat pe larg (ce faci, de ce faci, ce greseli eviti).
+- Include o sectiune despre erori frecvente si o sectiune "Cand sa ceri ajutor specializat".
+- Foloseste cel putin ${HOWTO_DETAIL_MIN_H2} subtitluri H2.
+- Foloseste subtitluri H3 pentru pasi (ex: "Pasul 1", "Pasul 2").`
+    : "";
 
   return `
 Ești jurnalist de știri de actualitate.
@@ -150,6 +198,7 @@ STRUCTURĂ:
 - Subtitluri doar dacă sunt necesare
 
 Categoria: ${category}
+${howToRules}
 
 Returnează STRICT JSON, fără markdown:
 {
@@ -170,12 +219,14 @@ REGULI OUTPUT:
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Include focus keyword natural în lead și într-un subtitlu H2.
-- Minim ${MIN_WORDS} de cuvinte.
+- Minim ${minWords} de cuvinte.
 ${extra}
 `;
 }
 
 export async function generateArticle(category) {
+  const requiredWords = requiredWordsForCategory(category);
+  const howToMode = isHowToCategory(category);
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
       const response = await openai.chat.completions.create({
@@ -187,7 +238,7 @@ export async function generateArticle(category) {
             content:
               "Esti un jurnalist profesionist de actualitate. Scrii factual, concis, fara clisee si fara limbaj promotional despre alte publicatii.",
           },
-          { role: "user", content: buildPrompt(category, attempt) },
+          { role: "user", content: buildPrompt(category, attempt, requiredWords) },
         ],
         max_tokens: 1800 + (attempt - 1) * 250,
         response_format: { type: "json_object" },
@@ -216,13 +267,48 @@ export async function generateArticle(category) {
       }
 
       const words = wordCount(article.content_html);
-      if (words < MIN_WORDS) {
+      if (words < requiredWords) {
         if (attempt < ATTEMPTS) {
-          console.log(`GENERATOR RETRY: articol prea scurt (${words}/${MIN_WORDS})`);
+          console.log(
+            `GENERATOR RETRY: articol prea scurt (${words}/${requiredWords})`
+          );
         } else {
-          console.log(`GENERATOR SKIP: articol prea scurt (${words}/${MIN_WORDS})`);
+          console.log(
+            `GENERATOR SKIP: articol prea scurt (${words}/${requiredWords})`
+          );
         }
         continue;
+      }
+
+      if (howToMode) {
+        const h2Count = countTagOccurrences(article.content_html, "h2");
+        if (h2Count < HOWTO_DETAIL_MIN_H2) {
+          if (attempt < ATTEMPTS) {
+            console.log(
+              `GENERATOR RETRY: ghid prea putin structurat (H2 ${h2Count}/${HOWTO_DETAIL_MIN_H2})`
+            );
+          } else {
+            console.log(
+              `GENERATOR SKIP: ghid prea putin structurat (H2 ${h2Count}/${HOWTO_DETAIL_MIN_H2})`
+            );
+          }
+          continue;
+        }
+        if (HOWTO_REQUIRE_STEP_HINTS) {
+          const stepHints = countStepHints(article.content_html);
+          if (stepHints < 3) {
+            if (attempt < ATTEMPTS) {
+              console.log(
+                `GENERATOR RETRY: ghid fara pasi suficient explicati (${stepHints}/3)`
+              );
+            } else {
+              console.log(
+                `GENERATOR SKIP: ghid fara pasi suficient explicati (${stepHints}/3)`
+              );
+            }
+            continue;
+          }
+        }
       }
 
       return article;
