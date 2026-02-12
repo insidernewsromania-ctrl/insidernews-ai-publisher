@@ -1,6 +1,7 @@
 param(
   [string]$ProjectRoot = "C:\Apps\insidernews-ai-publisher",
   [switch]$RunAfterUpdate,
+  [string]$Branch = "main",
   [string]$GitExe = "",
   [string]$NpmExe = ""
 )
@@ -86,11 +87,15 @@ if (-not (Test-Path $npmPath)) {
   throw "Resolved npm path does not exist: $npmPath"
 }
 
-Write-Host "===> Fetch origin/main"
-& $gitPath fetch origin main
+if (-not $Branch -or [string]::IsNullOrWhiteSpace($Branch)) {
+  $Branch = "main"
+}
 
-Write-Host "===> Pull origin/main"
-& $gitPath pull origin main
+Write-Host "===> Fetch origin/$Branch"
+& $gitPath fetch origin $Branch
+
+Write-Host "===> Pull origin/$Branch"
+& $gitPath pull origin $Branch
 
 Write-Host "===> Install/update dependencies"
 & $npmPath install
