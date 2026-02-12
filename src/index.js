@@ -365,7 +365,11 @@ const MEDIA_PROMO_VERBS = [
 const MEDIA_PROMO_TARGET_TERMS = [
   "stiri video",
   "stiri online",
+  "stiri de actualitate online",
+  "ultimele stiri",
   "actualizari",
+  "informatii",
+  "online",
   "pagina",
   "page",
   "site",
@@ -390,6 +394,8 @@ const MEDIA_PROMO_PHRASES = [
 
 const GENERIC_MEDIA_PROMO_PATTERNS = [
   /\b(?:publica|publicate|publicat|lanseaza|prezinta|difuzeaza|transmite|anunta)\b[\s\S]{0,60}\b(?:stiri|news)\b[\s\S]{0,30}\b(?:online|video)\b/,
+  /\b(?:news|stiri)\s+ro\b[\s\S]{0,24}\b(?:publica|lanseaza|prezinta|difuzeaza|transmite|anunta)\b/,
+  /\b(?:publica|lanseaza|prezinta|difuzeaza|transmite|anunta)\b[\s\S]{0,24}\bultimele\s+(?:stiri|news)\b/,
   /\bin\s+format\s+de\s+(?:stiri|news)\s+(?:online|video)\b/,
   /\b(?:stiri|news)\s+de\s+ultima\s+ora\s+pagina\s+\d{2,}\b/,
   /\b(?:pagina|page)\s+\d{3,}\b/,
@@ -886,6 +892,15 @@ function isLikelyMediaOutletPromotionText(text) {
   return false;
 }
 
+function isHardBlockedMediaOutletPromoText(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  if (!containsAnyTerm(normalized, MEDIA_PROMO_VERBS)) return false;
+  if (!/\b(?:stiri|news|online|video)\b/.test(normalized)) return false;
+  if (containsAnyTerm(normalized, MEDIA_OUTLET_TERMS)) return true;
+  return /\b(?:news|stiri)\s+ro\b/.test(normalized);
+}
+
 function isLikelyMediaOutletPromotion(item) {
   const combined = [item?.title, item?.content, item?.source]
     .filter(Boolean)
@@ -1196,7 +1211,13 @@ function isRecentEnough(item) {
 function isValidCandidate(item) {
   if (!item?.title) return false;
   if (isLowEditorialValueTitle(item.title)) return false;
-  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) return false;
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
+    return false;
+  }
   if (!isRecentEnough(item)) return false;
   const combined = `${item.title} ${item.content || ""}`;
   // Heuristica pe an e utilă doar când feed-ul nu oferă o dată clară.
@@ -1207,7 +1228,11 @@ function isValidCandidate(item) {
 function candidateRejectionReason(item) {
   if (!item?.title) return "missing_title";
   if (isLowEditorialValueTitle(item.title)) return "low_editorial_value_title";
-  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) {
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
     return "media_outlet_promo";
   }
   if (!isRecentEnough(item)) {
@@ -1376,7 +1401,11 @@ async function publishFromRssItem(item) {
     console.log("Duplicate source item. Skipping:", item.title);
     return false;
   }
-  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) {
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
     console.log("Rejected media-outlet promo item. Skipping:", item.title);
     return false;
   }
@@ -1437,6 +1466,19 @@ async function publishFromRssItem(item) {
 
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, item.title);
+
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotionText(
+      `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+    ) ||
+      isHardBlockedMediaOutletPromoText(
+        `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+      ))
+  ) {
+    console.log("Rejected rewritten media-outlet promo article. Skipping:", article.title);
+    return false;
+  }
 
   if (!isStrongTitle(article.title)) {
     const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
@@ -1510,6 +1552,19 @@ async function publishFallbackArticle() {
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
+
+    if (
+      BLOCK_MEDIA_OUTLET_PROMO &&
+      (isLikelyMediaOutletPromotionText(
+        `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+      ) ||
+        isHardBlockedMediaOutletPromoText(
+          `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+        ))
+    ) {
+      console.log("Rejected fallback media-outlet promo article:", article.title);
+      continue;
+    }
 
     if (!isStrongTitle(article.title)) {
       console.log("Fallback title quality too low. Trying next category.");
