@@ -521,6 +521,79 @@ const TABLOID_TITLE_PHRASES = [
   "wow",
 ];
 
+const BLOCK_MEDIA_OUTLET_PROMO = process.env.BLOCK_MEDIA_OUTLET_PROMO !== "false";
+const CONTEXT_WORD_MAX_OCCURRENCES = parseNonNegativeInt(
+  process.env.CONTEXT_WORD_MAX_OCCURRENCES || "2",
+  2
+);
+
+const MEDIA_OUTLET_TERMS = [
+  "stirile protv",
+  "protv",
+  "news ro",
+  "digi24",
+  "observator",
+  "antena 1",
+  "antena 3",
+  "romania tv",
+  "realitatea",
+  "hotnews",
+  "g4media",
+  "libertatea",
+  "adevarul",
+  "euronews",
+];
+
+const MEDIA_PROMO_VERBS = [
+  "publica",
+  "lanseaza",
+  "prezinta",
+  "difuzeaza",
+  "transmite",
+  "anunta",
+  "promoveaza",
+];
+
+const MEDIA_PROMO_TARGET_TERMS = [
+  "stiri video",
+  "stiri online",
+  "stiri de actualitate online",
+  "ultimele stiri",
+  "actualizari",
+  "informatii",
+  "online",
+  "pagina",
+  "page",
+  "site",
+  "canal",
+  "emisiune",
+  "aplicatie",
+  "cont oficial",
+  "youtube",
+  "facebook",
+  "tiktok",
+  "serie",
+];
+
+const MEDIA_PROMO_PHRASES = [
+  "cele mai recente stiri online",
+  "in format de stiri online",
+  "format de stiri online",
+  "serie de stiri video",
+  "fluxului de stiri",
+  "de ultima ora pagina",
+];
+
+const GENERIC_MEDIA_PROMO_PATTERNS = [
+  /\b(?:publica|publicate|publicat|lanseaza|prezinta|difuzeaza|transmite|anunta)\b[\s\S]{0,60}\b(?:stiri|news)\b[\s\S]{0,30}\b(?:online|video)\b/,
+  /\b(?:news|stiri)\s+ro\b[\s\S]{0,24}\b(?:publica|lanseaza|prezinta|difuzeaza|transmite|anunta)\b/,
+  /\b(?:publica|lanseaza|prezinta|difuzeaza|transmite|anunta)\b[\s\S]{0,24}\bultimele\s+(?:stiri|news)\b/,
+  /\bin\s+format\s+de\s+(?:stiri|news)\s+(?:online|video)\b/,
+  /\b(?:stiri|news)\s+de\s+ultima\s+ora\s+pagina\s+\d{2,}\b/,
+  /\b(?:pagina|page)\s+\d{3,}\b/,
+  /\bpublicate?\s+de\s+[a-z0-9][a-z0-9 .-]{1,40}\b/,
+];
+
 const internalLinkTargetsCache = new Map();
 
 function sleep(ms) {
@@ -1195,6 +1268,22 @@ function hasEditorialNoteBlock(html) {
   return /data-editorial-note="true"/i.test(html || "");
 }
 
+function isHardBlockedMediaOutletPromoText(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  if (!containsAnyTerm(normalized, MEDIA_PROMO_VERBS)) return false;
+  if (!/\b(?:stiri|news|online|video)\b/.test(normalized)) return false;
+  if (containsAnyTerm(normalized, MEDIA_OUTLET_TERMS)) return true;
+  return /\b(?:news|stiri)\s+ro\b/.test(normalized);
+}
+
+function isLikelyMediaOutletPromotion(item) {
+  const combined = [item?.title, item?.content, item?.source]
+    .filter(Boolean)
+    .join(" ");
+  return isLikelyMediaOutletPromotionText(combined);
+}
+
 function appendSourceAttribution(article, item) {
   if (!SOURCE_ATTRIBUTION_ENABLED || !article?.content_html) return;
   if (hasSourceAttributionBlock(article.content_html)) return;
@@ -1563,6 +1652,13 @@ function isRecentEnough(item) {
 function isValidCandidate(item) {
   if (!item?.title) return false;
   if (isLowEditorialValueTitle(item.title)) return false;
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
+    return false;
+  }
   if (!isRecentEnough(item)) return false;
   const combined = `${item.title} ${item.content || ""}`;
   // Heuristica pe an e utilă doar când feed-ul nu oferă o dată clară.
@@ -1573,6 +1669,13 @@ function isValidCandidate(item) {
 function candidateRejectionReason(item) {
   if (!item?.title) return "missing_title";
   if (isLowEditorialValueTitle(item.title)) return "low_editorial_value_title";
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
+    return "media_outlet_promo";
+  }
   if (!isRecentEnough(item)) {
     if (!item?.publishedAt) return "missing_published_at";
     return "not_same_day_or_not_recent";
@@ -1739,6 +1842,14 @@ async function publishFromRssItem(item) {
     console.log("Duplicate source item. Skipping:", item.title);
     return false;
   }
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotion(item) ||
+      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+  ) {
+    console.log("Rejected media-outlet promo item. Skipping:", item.title);
+    return false;
+  }
 
   const raw = [item.title, item.content].filter(Boolean).join("\n\n");
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
@@ -1784,6 +1895,19 @@ async function publishFromRssItem(item) {
 
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, item.title);
+
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    (isLikelyMediaOutletPromotionText(
+      `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+    ) ||
+      isHardBlockedMediaOutletPromoText(
+        `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+      ))
+  ) {
+    console.log("Rejected rewritten media-outlet promo article. Skipping:", article.title);
+    return false;
+  }
 
   if (!isStrongTitle(article.title)) {
     const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
@@ -1858,6 +1982,19 @@ async function publishFallbackArticle() {
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
+
+    if (
+      BLOCK_MEDIA_OUTLET_PROMO &&
+      (isLikelyMediaOutletPromotionText(
+        `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+      ) ||
+        isHardBlockedMediaOutletPromoText(
+          `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+        ))
+    ) {
+      console.log("Rejected fallback media-outlet promo article:", article.title);
+      continue;
+    }
 
     if (!isStrongTitle(article.title)) {
       console.log("Fallback title quality too low. Trying next category.");
