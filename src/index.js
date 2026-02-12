@@ -379,6 +379,23 @@ const MEDIA_PROMO_TARGET_TERMS = [
   "serie",
 ];
 
+const MEDIA_PROMO_PHRASES = [
+  "cele mai recente stiri online",
+  "in format de stiri online",
+  "format de stiri online",
+  "serie de stiri video",
+  "fluxului de stiri",
+  "de ultima ora pagina",
+];
+
+const GENERIC_MEDIA_PROMO_PATTERNS = [
+  /\b(?:publica|publicate|publicat|lanseaza|prezinta|difuzeaza|transmite|anunta)\b[\s\S]{0,60}\b(?:stiri|news)\b[\s\S]{0,30}\b(?:online|video)\b/,
+  /\bin\s+format\s+de\s+(?:stiri|news)\s+(?:online|video)\b/,
+  /\b(?:stiri|news)\s+de\s+ultima\s+ora\s+pagina\s+\d{2,}\b/,
+  /\b(?:pagina|page)\s+\d{3,}\b/,
+  /\bpublicate?\s+de\s+[a-z0-9][a-z0-9 .-]{1,40}\b/,
+];
+
 const internalLinkTargetsCache = new Map();
 
 function sleep(ms) {
@@ -846,7 +863,11 @@ function isLikelyMediaOutletPromotionText(text) {
   const normalized = normalizeText(text || "");
   if (!normalized) return false;
   const hasOutlet = containsAnyTerm(normalized, MEDIA_OUTLET_TERMS);
-  if (!hasOutlet) return false;
+  const hasPhrase = containsAnyTerm(normalized, MEDIA_PROMO_PHRASES);
+  const matchesGenericPattern = GENERIC_MEDIA_PROMO_PATTERNS.some(pattern =>
+    pattern.test(normalized)
+  );
+  if (!hasOutlet && !matchesGenericPattern && !hasPhrase) return false;
 
   const hasPromoVerb = containsAnyTerm(normalized, MEDIA_PROMO_VERBS);
   const hasPromoTarget = containsAnyTerm(normalized, MEDIA_PROMO_TARGET_TERMS);
@@ -857,6 +878,9 @@ function isLikelyMediaOutletPromotionText(text) {
     /\b(?:editie|sezon|episod)\b/.test(normalized);
 
   if (mentionsNumericPage) return true;
+  if (hasPhrase && (hasOutlet || hasPromoVerb || hasPromoTarget)) return true;
+  if (matchesGenericPattern && (hasOutlet || hasPromoVerb || hasPromoTarget)) return true;
+  if (matchesGenericPattern && !hasOutlet) return true;
   if (hasPromoVerb && hasPromoTarget) return true;
   if (hasPromoVerb && mentionsProgramSignals) return true;
   return false;
