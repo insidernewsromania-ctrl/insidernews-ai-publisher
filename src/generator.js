@@ -27,6 +27,7 @@ function parsePositiveInt(value, fallback) {
 
 const MIN_WORDS = parsePositiveInt(FALLBACK_MIN_WORDS, 350);
 const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
 
@@ -139,6 +140,8 @@ REGULI:
 - Este PERMISĂ menționarea altor ani (2024, 2025 etc.) DOAR ca context secundar
 - NU prezenta evenimente vechi ca fiind actuale
 - NU scrie analize generale sau retrospective
+- NU genera articole despre promovarea altor publicatii, canale, pagini sau emisiuni media
+- Evita repetitia formulei "in contextul"; foloseste exprimari directe si variate
 - Ton: știre de presă, factual, neutru
 
 STRUCTURĂ:
@@ -176,10 +179,14 @@ export async function generateArticle(category) {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
+        model: OPENAI_MODEL,
         temperature: attempt === 1 ? 0.35 : 0.3,
         messages: [
-          { role: "system", content: "Ești un jurnalist profesionist de actualitate." },
+          {
+            role: "system",
+            content:
+              "Esti un jurnalist profesionist de actualitate. Scrii factual, concis, fara clisee si fara limbaj promotional despre alte publicatii.",
+          },
           { role: "user", content: buildPrompt(category, attempt) },
         ],
         max_tokens: 1800 + (attempt - 1) * 250,

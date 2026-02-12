@@ -329,6 +329,56 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
   /\brezultate loto\b/i,
 ];
 
+const BLOCK_MEDIA_OUTLET_PROMO = process.env.BLOCK_MEDIA_OUTLET_PROMO !== "false";
+const CONTEXT_WORD_MAX_OCCURRENCES = parseNonNegativeInt(
+  process.env.CONTEXT_WORD_MAX_OCCURRENCES || "2",
+  2
+);
+
+const MEDIA_OUTLET_TERMS = [
+  "stirile protv",
+  "protv",
+  "news ro",
+  "digi24",
+  "observator",
+  "antena 1",
+  "antena 3",
+  "romania tv",
+  "realitatea",
+  "hotnews",
+  "g4media",
+  "libertatea",
+  "adevarul",
+  "euronews",
+];
+
+const MEDIA_PROMO_VERBS = [
+  "publica",
+  "lanseaza",
+  "prezinta",
+  "difuzeaza",
+  "transmite",
+  "anunta",
+  "promoveaza",
+];
+
+const MEDIA_PROMO_TARGET_TERMS = [
+  "stiri video",
+  "stiri online",
+  "actualizari",
+  "pagina",
+  "page",
+  "site",
+  "canal",
+  "emisiune",
+  "aplicatie",
+  "cont oficial",
+  "youtube",
+  "facebook",
+  "tiktok",
+  "serie",
+];
+
 const internalLinkTargetsCache = new Map();
 
 function sleep(ms) {
@@ -783,6 +833,69 @@ function isLowEditorialValueTitle(title) {
   return LOW_EDITORIAL_VALUE_PATTERNS.some(pattern => pattern.test(normalized));
 }
 
+function containsAnyTerm(normalizedText, terms = []) {
+  if (!normalizedText) return false;
+  for (const term of terms) {
+    if (!term) continue;
+    if (normalizedText.includes(term)) return true;
+  }
+  return false;
+}
+
+function isLikelyMediaOutletPromotionText(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  const hasOutlet = containsAnyTerm(normalized, MEDIA_OUTLET_TERMS);
+  if (!hasOutlet) return false;
+
+  const hasPromoVerb = containsAnyTerm(normalized, MEDIA_PROMO_VERBS);
+  const hasPromoTarget = containsAnyTerm(normalized, MEDIA_PROMO_TARGET_TERMS);
+  const mentionsNumericPage =
+    /\bpagina\s+\d{3,}\b/.test(normalized) || /\bpage\s+\d{3,}\b/.test(normalized);
+  const mentionsProgramSignals =
+    /\b(?:stiri|news)\s+(?:video|online)\b/.test(normalized) ||
+    /\b(?:editie|sezon|episod)\b/.test(normalized);
+
+  if (mentionsNumericPage) return true;
+  if (hasPromoVerb && hasPromoTarget) return true;
+  if (hasPromoVerb && mentionsProgramSignals) return true;
+  return false;
+}
+
+function isLikelyMediaOutletPromotion(item) {
+  const combined = [item?.title, item?.content, item?.source]
+    .filter(Boolean)
+    .join(" ");
+  return isLikelyMediaOutletPromotionText(combined);
+}
+
+function reduceContextPhraseRepetition(html, maxOccurrences = 1) {
+  if (!html) return "";
+  const limit = Math.max(0, maxOccurrences);
+  let seen = 0;
+  const replacements = [
+    "in acest cadru",
+    "in aceasta situatie",
+    "potrivit datelor disponibile",
+  ];
+  return html.replace(/\b(in|în)\s+contextul\b/gi, match => {
+    seen += 1;
+    if (seen <= limit) return match;
+    const replacement = replacements[(seen - limit - 1) % replacements.length];
+    if (/^[IÎ]/.test(match)) {
+      return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+    }
+    return replacement;
+  });
+}
+
+function countContextWordOccurrences(html) {
+  const normalized = normalizeText(stripHtml(html || ""));
+  if (!normalized) return 0;
+  const matches = normalized.match(/\bcontext(?:ul|ului)?\b/g);
+  return matches ? matches.length : 0;
+}
+
 function buildMetaDescription(article) {
   const lead = firstParagraphText(article?.content_html || "");
   const body = stripHtml(article?.content_html || "").replace(/\s+/g, " ").trim();
@@ -835,6 +948,20 @@ function qualityGateIssues(article) {
     countInternalLinks(article?.content_html || "") < MIN_INTERNAL_LINKS
   ) {
     issues.push("missing_internal_links");
+  }
+  if (
+    BLOCK_MEDIA_OUTLET_PROMO &&
+    isLikelyMediaOutletPromotionText(
+      `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
+    )
+  ) {
+    issues.push("media_outlet_promo");
+  }
+  if (
+    CONTEXT_WORD_MAX_OCCURRENCES >= 0 &&
+    countContextWordOccurrences(article?.content_html || "") > CONTEXT_WORD_MAX_OCCURRENCES
+  ) {
+    issues.push("context_word_overused");
   }
   return issues;
 }
@@ -1045,6 +1172,7 @@ function isRecentEnough(item) {
 function isValidCandidate(item) {
   if (!item?.title) return false;
   if (isLowEditorialValueTitle(item.title)) return false;
+  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) return false;
   if (!isRecentEnough(item)) return false;
   const combined = `${item.title} ${item.content || ""}`;
   // Heuristica pe an e utilă doar când feed-ul nu oferă o dată clară.
@@ -1055,6 +1183,9 @@ function isValidCandidate(item) {
 function candidateRejectionReason(item) {
   if (!item?.title) return "missing_title";
   if (isLowEditorialValueTitle(item.title)) return "low_editorial_value_title";
+  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) {
+    return "media_outlet_promo";
+  }
   if (!isRecentEnough(item)) {
     if (!item?.publishedAt) return "missing_published_at";
     return "not_same_day_or_not_recent";
@@ -1218,6 +1349,10 @@ async function publishFromRssItem(item) {
     console.log("Duplicate source item. Skipping:", item.title);
     return false;
   }
+  if (BLOCK_MEDIA_OUTLET_PROMO && isLikelyMediaOutletPromotion(item)) {
+    console.log("Rejected media-outlet promo item. Skipping:", item.title);
+    return false;
+  }
 
   const raw = [item.title, item.content].filter(Boolean).join("\n\n");
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
@@ -1233,6 +1368,18 @@ async function publishFromRssItem(item) {
   });
 
   if (!article) return false;
+
+  if (countContextWordOccurrences(article.content_html) > CONTEXT_WORD_MAX_OCCURRENCES) {
+    console.log("Style retry: reducing repetitive use of 'context'.");
+    article = await rewriteNews(raw, item.title, {
+      publishedAt: item.publishedAt,
+      source: item.source,
+      link: item.link,
+      roleConstraints,
+      strictStyleMode: true,
+    });
+    if (!article) return false;
+  }
 
   if (ROLE_FACT_CHECK_ENABLED && sourceRoleClaims.size > 0) {
     let mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
@@ -1304,6 +1451,10 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
+  article.content_html = reduceContextPhraseRepetition(
+    article.content_html,
+    CONTEXT_WORD_MAX_OCCURRENCES
+  );
 
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article);
@@ -1348,6 +1499,10 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
+    article.content_html = reduceContextPhraseRepetition(
+      article.content_html,
+      CONTEXT_WORD_MAX_OCCURRENCES
+    );
 
     if (STRICT_QUALITY_GATE) {
       const issues = qualityGateIssues(article);

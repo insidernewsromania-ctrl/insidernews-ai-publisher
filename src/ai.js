@@ -20,6 +20,7 @@ const AI_MIN_WORDS = Number(
   process.env.AI_MIN_WORDS || process.env.MIN_WORDS || "350"
 );
 const AI_REWRITE_ATTEMPTS = Number(process.env.AI_REWRITE_ATTEMPTS || "2");
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number(value);
@@ -81,7 +82,18 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
     .replace("{{ROLE_CONSTRAINTS}}", roleConstraints)
     .replace("{{MIN_WORDS}}", String(MIN_WORDS));
 
-  if (attempt <= 1 && !meta?.strictRoleMode) return base;
+  if (attempt <= 1 && !meta?.strictRoleMode && !meta?.strictStyleMode) return base;
+
+  if (meta?.strictRoleMode && meta?.strictStyleMode) {
+    return `${base}
+
+ATENTIE CRITICA:
+- Exista risc de confuzie intre functiile oficiale (ex: premier vs primar).
+- Verifica explicit fiecare persoana mentionata si pastreaza functia corecta din sursa.
+- Daca nu esti sigur, elimina functia si pastreaza doar numele.
+- Stil jurnalistic strict: elimina cliseele si repetiile.
+- Nu repeta formula "in contextul"; foloseste o formulare directa, naturala.`;
+  }
 
   if (meta?.strictRoleMode) {
     return `${base}
@@ -90,6 +102,15 @@ ATENTIE CRITICA:
 - Exista risc de confuzie intre functiile oficiale (ex: premier vs primar).
 - Verifica explicit fiecare persoana mentionata si pastreaza functia corecta din sursa.
 - Daca nu esti sigur, elimina functia si pastreaza doar numele.`;
+  }
+
+  if (meta?.strictStyleMode) {
+    return `${base}
+
+ATENTIE DE STIL:
+- Raspunsul anterior a avut formule repetitive.
+- Scrie concis si jurnalistic, cu propozitii scurte.
+- Nu repeta formula "in contextul"; foloseste variatii firesti (ex: "in acest cadru", "potrivit datelor").`;
   }
 
   return `${base}
@@ -145,9 +166,13 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
   for (let attempt = 1; attempt <= REWRITE_ATTEMPTS; attempt += 1) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-4.1-mini",
+        model: OPENAI_MODEL,
         messages: [
-          { role: "system", content: "Ești un jurnalist profesionist." },
+          {
+            role: "system",
+            content:
+              "Esti un jurnalist profesionist, riguros factual, precis si clar. Evita cliseele, repetiile si limbajul promotional despre alte publicatii.",
+          },
           { role: "user", content: buildPrompt(rawContent, originalTitle, meta, attempt) },
         ],
         temperature: attempt === 1 ? 0.35 : 0.3,

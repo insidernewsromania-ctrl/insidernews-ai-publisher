@@ -8,10 +8,12 @@ REGULI OBLIGATORII:
 - Text ORIGINAL, fără plagiat.
 - Fără citarea sursei sau a altor publicații.
 - Fără formulări de tip „potrivit surselor”.
+- Nu transforma articolul intr-o promovare pentru alte publicatii, pagini, canale sau emisiuni media.
 - Minim {{MIN_WORDS}} de cuvinte.
 - Fără secțiune intitulată „Concluzie”.
 - Ton profesionist, informativ, fără senzaționalism.
 - Paragrafe scurte (2–3 propoziții).
+- Evita formularea repetitiva „in contextul”; foloseste un stil direct, variat, jurnalistic.
 - Include subtitluri H2 relevante.
 - Primul paragraf trebuie să rezume esența știrii (lead).
 - Limba română corectă, diacritice.
