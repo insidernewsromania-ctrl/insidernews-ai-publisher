@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import {
   cleanTitle,
   extractJson,
+  hasEnigmaticTitleSignals,
+  hasSuperlativeTitleSignals,
   isStrongTitle,
   normalizeText,
   stripHtml,
@@ -37,6 +39,10 @@ const HOWTO_DETAIL_MIN_WORDS = parsePositiveInt(
 );
 const HOWTO_DETAIL_MIN_H2 = parsePositiveInt(process.env.HOWTO_DETAIL_MIN_H2 || "4", 4);
 const HOWTO_REQUIRE_STEP_HINTS = process.env.HOWTO_REQUIRE_STEP_HINTS !== "false";
+
+function hasHeadlineStyleIssues(title) {
+  return hasEnigmaticTitleSignals(title) || hasSuperlativeTitleSignals(title);
+}
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
@@ -191,6 +197,11 @@ REGULI:
 - NU genera articole despre promovarea altor publicatii, canale, pagini sau emisiuni media
 - Evita repetitia formulei "in contextul"; foloseste exprimari directe si variate
 - Ton: știre de presă, factual, neutru
+- Stil profesionist, natural, fără cuvinte pompoase
+- Propoziții scurte și clare
+- Fără limbaj emoțional, fără umplutură și fără entuziasm fals
+- Evită titluri enigmatice (ex.: „un jucător”, „o vedetă”, „acesta...”)
+- Evită superlative de tip „cel mai”, „istoric”, „uriaș” dacă nu sunt susținute factual
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
@@ -218,6 +229,7 @@ REGULI OUTPUT:
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
+- Titlul trebuie să includă clar actorul principal (persoană/club/instituție), nu formulări vagi.
 - Include focus keyword natural în lead și într-un subtitlu H2.
 - Minim ${minWords} de cuvinte.
 ${extra}
@@ -262,6 +274,15 @@ export async function generateArticle(category) {
           console.log("GENERATOR RETRY: titlu slab sau incomplet");
         } else {
           console.log("GENERATOR SKIP: titlu slab sau incomplet");
+        }
+        continue;
+      }
+
+      if (hasHeadlineStyleIssues(article.title)) {
+        if (attempt < ATTEMPTS) {
+          console.log("GENERATOR RETRY: titlu vag/superlativ");
+        } else {
+          console.log("GENERATOR SKIP: titlu vag/superlativ");
         }
         continue;
       }

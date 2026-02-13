@@ -67,6 +67,55 @@ const TITLE_END_STOPWORDS = new Set([
   "o",
 ]);
 
+const VAGUE_SUBJECT_TERMS = [
+  "jucator",
+  "sportiv",
+  "fotbalist",
+  "atacant",
+  "fundas",
+  "portar",
+  "antrenor",
+  "vedeta",
+  "actor",
+  "cantaret",
+  "artist",
+  "politician",
+  "demnitar",
+  "afacerist",
+  "milionar",
+  "roman",
+  "romanca",
+  "tanar",
+  "tanara",
+  "barbat",
+  "femeie",
+  "elev",
+  "profesor",
+  "medic",
+  "sofer",
+  "persoana",
+];
+
+const ENIGMATIC_TITLE_PATTERNS = [
+  /^(?:acest|aceasta|acesta|acestea|el|ea)\b/,
+  /\b(?:ce\s+a\s+urmat|uite\s+cine|nu\s+o\s+sa\s+iti\s+vina\s+sa\s+crezi)\b/,
+  /\b(?:mister|misterios|enigmatic)\b/,
+];
+
+const SUPERLATIVE_TITLE_PHRASES = [
+  "soc total",
+  "de necrezut",
+  "halucinant",
+  "fara precedent",
+  "record absolut",
+  "istoric",
+  "urias",
+  "uriasa",
+  "colosal",
+  "exploziv",
+  "senzational",
+];
+
 const INCOMPLETE_CONNECTOR_SEQUENCES = [
   ["in", "timp", "ce"],
   ["dupa", "ce"],
@@ -298,6 +347,14 @@ function trimTrailingStopwords(text) {
   return current;
 }
 
+function hasExplicitEntityMarker(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  if (/\b[A-Z0-9]{2,}\b/.test(value)) return true;
+  if (/\b[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\s+[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\b/.test(value)) return true;
+  return false;
+}
+
 export function cleanTitle(text, maxLength = 110) {
   if (!text) return "";
   const withoutAttribution = trimSourceAttributionSuffix(text.toString());
@@ -368,6 +425,38 @@ export function isStrongTitle(text, minWords = 5) {
   const words = normalizeText(cleaned).split(" ").filter(Boolean);
   if (words.length < minWords) return false;
   return !hasSuspiciousTitleEnding(cleaned);
+}
+
+export function hasEnigmaticTitleSignals(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+
+  if (ENIGMATIC_TITLE_PATTERNS.some(pattern => pattern.test(normalized))) {
+    return true;
+  }
+
+  const vagueSubjectPattern = new RegExp(
+    `\\b(?:un|o)\\s+(?:${VAGUE_SUBJECT_TERMS.join("|")})\\b`
+  );
+  if (vagueSubjectPattern.test(normalized) && !hasExplicitEntityMarker(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function hasSuperlativeTitleSignals(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  if (SUPERLATIVE_TITLE_PHRASES.some(phrase => normalized.includes(phrase))) {
+    return true;
+  }
+  if (/\b(?:cel|cea|cei|cele)\s+mai\b/.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractJson(text) {

@@ -19,6 +19,8 @@ import {
 } from "./facts.js";
 import {
   cleanTitle,
+  hasEnigmaticTitleSignals,
+  hasSuperlativeTitleSignals,
   hoursSince,
   isStrongTitle,
   isSameCalendarDay,
@@ -336,6 +338,8 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
 ];
 
 const BLOCK_MEDIA_OUTLET_PROMO = process.env.BLOCK_MEDIA_OUTLET_PROMO !== "false";
+const BLOCK_ENIGMATIC_TITLES = process.env.BLOCK_ENIGMATIC_TITLES !== "false";
+const BLOCK_SUPERLATIVE_TITLES = process.env.BLOCK_SUPERLATIVE_TITLES !== "false";
 const CONTEXT_WORD_MAX_OCCURRENCES = parseNonNegativeInt(
   process.env.CONTEXT_WORD_MAX_OCCURRENCES || "2",
   2
@@ -914,6 +918,17 @@ function isLikelyMediaOutletPromotion(item) {
   return isLikelyMediaOutletPromotionText(combined);
 }
 
+function hasHeadlineStyleIssues(title) {
+  const issues = [];
+  if (BLOCK_ENIGMATIC_TITLES && hasEnigmaticTitleSignals(title)) {
+    issues.push("enigmatic_title");
+  }
+  if (BLOCK_SUPERLATIVE_TITLES && hasSuperlativeTitleSignals(title)) {
+    issues.push("superlative_title");
+  }
+  return issues;
+}
+
 function reduceContextPhraseRepetition(html, maxOccurrences = 1) {
   if (!html) return "";
   const limit = Math.max(0, maxOccurrences);
@@ -973,6 +988,7 @@ function buildMetaDescription(article) {
 function qualityGateIssues(article) {
   const issues = [];
   if (!isStrongTitle(article?.title || "")) issues.push("weak_title");
+  issues.push(...hasHeadlineStyleIssues(article?.title || ""));
   if (!hasH2Heading(article?.content_html || "")) issues.push("missing_h2");
   const lead = firstParagraphText(article?.content_html || "");
   if (wordCount(lead) < MIN_LEAD_WORDS) issues.push("lead_too_short");
@@ -1561,7 +1577,7 @@ async function publishFromRssItem(item) {
 
   if (!isStrongTitle(article.title)) {
     const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
-    if (!isStrongTitle(fallbackTitle)) {
+    if (!isStrongTitle(fallbackTitle) || hasHeadlineStyleIssues(fallbackTitle).length > 0) {
       console.log("Title quality too low. Skipping.");
       return false;
     }
@@ -1570,6 +1586,18 @@ async function publishFromRssItem(item) {
       article.seo_title || fallbackTitle,
       SEO_TITLE_MAX_CHARS
     );
+  }
+
+  const headlineIssues = hasHeadlineStyleIssues(article.title);
+  if (headlineIssues.length > 0) {
+    const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
+    if (isStrongTitle(fallbackTitle) && hasHeadlineStyleIssues(fallbackTitle).length === 0) {
+      article.title = fallbackTitle;
+      article.seo_title = cleanTitle(article.seo_title || fallbackTitle, SEO_TITLE_MAX_CHARS);
+    } else {
+      console.log(`Title style quality too low (${headlineIssues.join(", ")}). Skipping.`);
+      return false;
+    }
   }
 
   if (!hasMinimumContent(article.content_html)) {
@@ -1647,6 +1675,13 @@ async function publishFallbackArticle() {
 
     if (!isStrongTitle(article.title)) {
       console.log("Fallback title quality too low. Trying next category.");
+      continue;
+    }
+    const fallbackHeadlineIssues = hasHeadlineStyleIssues(article.title);
+    if (fallbackHeadlineIssues.length > 0) {
+      console.log(
+        `Fallback title style too low (${fallbackHeadlineIssues.join(", ")}). Trying next category.`
+      );
       continue;
     }
 
