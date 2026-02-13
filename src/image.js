@@ -41,7 +41,12 @@ function fileExtFromContentType(contentType = "") {
 
 function looksDecorativeImage(url) {
   const normalized = `${url || ""}`.toLowerCase();
-  return /(?:logo|icon|favicon|avatar|sprite|ads?|banner|watermark)/.test(normalized);
+  if (/(?:logo|icon|favicon|avatar|sprite|watermark)/.test(normalized)) return true;
+  if (/(?:\/|[-_])ads?(?:\/|[-_]|\.|$)/.test(normalized)) return true;
+  if (/\b(?:16|24|32|48|64|96|128)x(?:16|24|32|48|64|96|128)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 function uniqueUrls(values = []) {
@@ -67,11 +72,16 @@ function extractImageCandidatesFromHtml(html, baseUrl = "") {
     /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
     /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["'][^>]*>/gi,
     /<img[^>]+src=["']([^"']+)["'][^>]*>/gi,
+    /<img[^>]+data-src=["']([^"']+)["'][^>]*>/gi,
+    /<img[^>]+data-lazy-src=["']([^"']+)["'][^>]*>/gi,
+    /<source[^>]+srcset=["']([^"']+)["'][^>]*>/gi,
   ];
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(source)) !== null) {
-      const absolute = toAbsoluteUrl(match[1], baseUrl);
+      const raw = `${match[1] || ""}`.split(",")[0]?.trim() || "";
+      const srcsetUrl = raw.split(/\s+/)[0] || raw;
+      const absolute = toAbsoluteUrl(srcsetUrl, baseUrl);
       if (!absolute) continue;
       candidates.push(absolute);
       if (candidates.length >= 30) break;
@@ -108,15 +118,20 @@ function tempImagePath(url, ext) {
   return path.join(ensureTempDir(), `featured-${digest}.${ext}`);
 }
 
-async function downloadImageUrl(url) {
+async function downloadImageUrl(url, referer = "") {
+  const headers = {
+    "User-Agent": "insidernews-ai-publisher/1.0",
+    Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+  };
+  const refererValue = `${referer || ""}`.trim();
+  if (isHttpUrl(refererValue)) {
+    headers.Referer = refererValue;
+  }
   const res = await axios.get(url, {
     timeout: HTTP_TIMEOUT_MS,
     maxRedirects: 5,
     responseType: "arraybuffer",
-    headers: {
-      "User-Agent": "insidernews-ai-publisher/1.0",
-      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-    },
+    headers,
   });
   const contentType = `${res?.headers?.["content-type"] || ""}`.toLowerCase();
   if (!contentType.startsWith("image/")) {
@@ -163,7 +178,7 @@ export async function downloadImageFromSource(sourceUrl, rssImageCandidates = []
   let lastError = null;
   for (const candidate of allCandidates.slice(0, 10)) {
     try {
-      return await downloadImageUrl(candidate);
+      return await downloadImageUrl(candidate, sourceUrl);
     } catch (err) {
       lastError = err;
     }
