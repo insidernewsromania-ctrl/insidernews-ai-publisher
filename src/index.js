@@ -231,6 +231,9 @@ const USE_DYNAMIC_IMAGE = process.env.USE_DYNAMIC_IMAGE === "true";
 const SOURCE_FEATURED_IMAGE_ENABLED = process.env.SOURCE_FEATURED_IMAGE_ENABLED !== "false";
 const SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT =
   process.env.SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT !== "false";
+const SOURCE_FEATURED_IMAGE_REQUIRED =
+  process.env.SOURCE_FEATURED_IMAGE_REQUIRED === "true";
+const IMAGE_DEBUG = process.env.IMAGE_DEBUG === "true";
 const DEFAULT_FEATURED_MEDIA_ID = parsePositiveInt(
   process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
   0
@@ -1275,18 +1278,30 @@ function prepareCandidates(items) {
 
 async function maybeUploadImage(article, sourceItem = null) {
   const hasDefaultImage = DEFAULT_FEATURED_MEDIA_ID > 0;
+  const sourceUrl = `${sourceItem?.link || ""}`.trim();
+  const sourceCandidates = Array.isArray(sourceItem?.imageCandidates)
+    ? sourceItem.imageCandidates
+    : [];
+
+  if (IMAGE_DEBUG) {
+    console.log(
+      `Image strategy: sourceEnabled=${SOURCE_FEATURED_IMAGE_ENABLED}, sourceRequired=${SOURCE_FEATURED_IMAGE_REQUIRED}, overrideDefault=${SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT}, defaultId=${DEFAULT_FEATURED_MEDIA_ID}, dynamic=${USE_DYNAMIC_IMAGE}, sourceUrl=${sourceUrl || "none"}, rssCandidates=${sourceCandidates.length}`
+    );
+  }
+
   if (hasDefaultImage && !SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT) {
+    if (IMAGE_DEBUG) {
+      console.log(`Image selected: default media id ${DEFAULT_FEATURED_MEDIA_ID}`);
+    }
     return DEFAULT_FEATURED_MEDIA_ID;
   }
 
   let imageId = null;
+  let sourceAttempted = false;
   if (SOURCE_FEATURED_IMAGE_ENABLED) {
     try {
-      const sourceUrl = `${sourceItem?.link || ""}`.trim();
-      const sourceCandidates = Array.isArray(sourceItem?.imageCandidates)
-        ? sourceItem.imageCandidates
-        : [];
       if (sourceUrl || sourceCandidates.length > 0) {
+        sourceAttempted = true;
         const sourceImage = await downloadImageFromSource(sourceUrl, sourceCandidates);
         if (sourceImage?.filePath) {
           imageId = await uploadImage({
@@ -1298,7 +1313,12 @@ async function maybeUploadImage(article, sourceItem = null) {
             altText: article.title || article.focus_keyword,
             caption: article.meta_description || "",
           });
-          if (imageId) return imageId;
+          if (imageId) {
+            if (IMAGE_DEBUG) {
+              console.log(`Image selected: source upload media id ${imageId}`);
+            }
+            return imageId;
+          }
         }
       }
     } catch (err) {
@@ -1306,11 +1326,22 @@ async function maybeUploadImage(article, sourceItem = null) {
     }
   }
 
+  if (SOURCE_FEATURED_IMAGE_REQUIRED && (sourceAttempted || SOURCE_FEATURED_IMAGE_ENABLED)) {
+    console.log("Source featured image is required but unavailable. Skipping image fallback.");
+    return null;
+  }
+
   if (hasDefaultImage) {
+    if (IMAGE_DEBUG) {
+      console.log(`Image selected: fallback default media id ${DEFAULT_FEATURED_MEDIA_ID}`);
+    }
     return DEFAULT_FEATURED_MEDIA_ID;
   }
 
   if (!USE_DYNAMIC_IMAGE) {
+    if (IMAGE_DEBUG) {
+      console.log("Image result: none (dynamic disabled and no source/default image)");
+    }
     return null;
   }
 
@@ -1323,6 +1354,9 @@ async function maybeUploadImage(article, sourceItem = null) {
         altText: article.title || article.focus_keyword,
         caption: article.meta_description || "",
       });
+      if (imageId && IMAGE_DEBUG) {
+        console.log(`Image selected: dynamic upload media id ${imageId}`);
+      }
     }
   } catch (err) {
     console.log("Image skipped:", err.message);
