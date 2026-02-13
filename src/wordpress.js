@@ -1,6 +1,7 @@
 import axios from "axios";
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
 import {
   buildTopicKey,
   normalizeText,
@@ -101,34 +102,48 @@ export function buildStablePostSlug(article = {}, sourceUrl = "") {
 }
 
 export async function uploadImage(options = {}) {
-  const img = fs.readFileSync("image.jpg");
+  const filePath = options.filePath || "image.jpg";
+  const img = fs.readFileSync(filePath);
+  const explicitFileName = `${options.fileName || ""}`.trim();
+  const fileExt = path.extname(filePath || "").replace(/^\./, "").toLowerCase() || "jpg";
   const fileBase = slugify(options.title || options.altText || "image") || "image";
-  const fileName = `${fileBase}.jpg`;
+  const fileName = explicitFileName || `${fileBase}.${fileExt}`;
+  const contentType = `${options.contentType || ""}`.trim() || "image/jpeg";
 
-  const res = await axios.post(wpApi("/media"), img, {
-    auth,
-    headers: {
-      "Content-Type": "image/jpeg",
-      "Content-Disposition": `attachment; filename=${fileName}`,
-    },
-  });
+  try {
+    const res = await axios.post(wpApi("/media"), img, {
+      auth,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename=${fileName}`,
+      },
+    });
 
-  const mediaId = res.data.id;
-  const payload = {};
+    const mediaId = res.data.id;
+    const payload = {};
 
-  if (options.altText) payload.alt_text = truncate(options.altText, 120);
-  if (options.title) payload.title = truncate(options.title, 120);
-  if (options.caption) payload.caption = truncate(options.caption, 300);
+    if (options.altText) payload.alt_text = truncate(options.altText, 120);
+    if (options.title) payload.title = truncate(options.title, 120);
+    if (options.caption) payload.caption = truncate(options.caption, 300);
 
-  if (Object.keys(payload).length > 0) {
-    try {
-      await axios.post(wpApi(`/media/${mediaId}`), payload, { auth });
-    } catch (err) {
-      console.warn("MEDIA META ERROR:", err.message);
+    if (Object.keys(payload).length > 0) {
+      try {
+        await axios.post(wpApi(`/media/${mediaId}`), payload, { auth });
+      } catch (err) {
+        console.warn("MEDIA META ERROR:", err.message);
+      }
+    }
+
+    return mediaId;
+  } finally {
+    if (options.cleanupFile === true && filePath && filePath !== "image.jpg") {
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // ignore temp cleanup errors
+      }
     }
   }
-
-  return mediaId;
 }
 
 async function findPostBySlug(slug) {
