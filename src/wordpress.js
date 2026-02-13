@@ -22,6 +22,23 @@ function parsePositiveInt(value, fallback = 0) {
 }
 
 const DEFAULT_WP_AUTHOR_ID = parsePositiveInt(process.env.WP_AUTHOR_ID || "0", 0);
+const DEFAULT_WP_FEATURED_MEDIA_ID = parsePositiveInt(
+  process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
+  0
+);
+
+function parseCsvPositiveInts(value) {
+  return uniqueStrings(
+    `${value || ""}`
+      .split(",")
+      .map(part => part.trim())
+      .filter(Boolean)
+  )
+    .map(part => parsePositiveInt(part, 0))
+    .filter(id => id > 0);
+}
+
+const DEFAULT_WP_TAG_IDS = parseCsvPositiveInts(process.env.WP_DEFAULT_TAG_IDS || "");
 
 function wpBaseUrl() {
   const base = process.env.WP_URL || "";
@@ -274,9 +291,17 @@ async function findTagByName(name) {
     { auth }
   );
   const normalized = normalizeText(name);
-  return (res.data || []).find(
-    tag => normalizeText(tag?.name || "") === normalized
-  );
+  const rows = res.data || [];
+  const exact = rows.find(tag => normalizeText(tag?.name || "") === normalized);
+  if (exact) return exact;
+
+  const desiredSlug = slugify(name || "");
+  if (desiredSlug) {
+    const bySlug = rows.find(tag => `${tag?.slug || ""}`.toLowerCase() === desiredSlug);
+    if (bySlug) return bySlug;
+  }
+
+  return rows[0] || null;
 }
 
 async function createTag(name) {
@@ -294,7 +319,11 @@ async function createTag(name) {
 }
 
 async function resolveTagIds(tags) {
-  const names = uniqueStrings(tags).slice(0, 5);
+  const names = uniqueStrings(tags)
+    .map(tag => `${tag || ""}`.replace(/[#|]+/g, " ").replace(/\s+/g, " ").trim())
+    .map(tag => truncate(tag, 48))
+    .filter(Boolean)
+    .slice(0, 5);
   const ids = [];
   for (const name of names) {
     try {
@@ -423,7 +452,15 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
   if (authorId > 0) payload.author = authorId;
 
   if (categoryId) payload.categories = [categoryId];
-  if (imageId) payload.featured_media = imageId;
+  const fallbackFeaturedMediaId = parsePositiveInt(
+    options.fallbackFeaturedMediaId || DEFAULT_WP_FEATURED_MEDIA_ID,
+    0
+  );
+  const preferredFeaturedMediaId = parsePositiveInt(
+    imageId || fallbackFeaturedMediaId,
+    0
+  );
+  if (preferredFeaturedMediaId > 0) payload.featured_media = preferredFeaturedMediaId;
   const excerptSource =
     article.meta_description ||
     stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
@@ -438,14 +475,41 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
     ...(article.tags || []),
     article.focus_keyword,
   ]).slice(0, 5);
+  let tagIds = [];
   if (seoTags.length > 0) {
-    const tagIds = await resolveTagIds(seoTags);
-    if (tagIds.length > 0) payload.tags = tagIds;
+    tagIds = await resolveTagIds(seoTags);
+  }
+  if (tagIds.length === 0 && DEFAULT_WP_TAG_IDS.length > 0) {
+    tagIds = DEFAULT_WP_TAG_IDS;
+  }
+  if (tagIds.length > 0) {
+    payload.tags = tagIds;
   }
 
   if (Object.keys(meta).length > 0) {
     payload.meta = meta;
   }
 
-  await axios.post(wpApi("/posts"), payload, { auth });
+  const res = await axios.post(wpApi("/posts"), payload, { auth });
+  const postId = parsePositiveInt(res?.data?.id || "0", 0);
+  const currentFeaturedMedia = parsePositiveInt(res?.data?.featured_media || "0", 0);
+  if (
+    postId > 0 &&
+    preferredFeaturedMediaId > 0 &&
+    currentFeaturedMedia !== preferredFeaturedMediaId
+  ) {
+    try {
+      await axios.post(
+        wpApi(`/posts/${postId}`),
+        { featured_media: preferredFeaturedMediaId },
+        { auth }
+      );
+    } catch (err) {
+      console.warn(
+        `FEATURED IMAGE WARN: could not enforce media ${preferredFeaturedMediaId} on post ${postId}:`,
+        err.message
+      );
+    }
+  }
+  return res.data;
 }
