@@ -4,6 +4,8 @@ import { NEWS_REWRITE_PROMPT } from "./prompts.js";
 import {
   cleanTitle,
   extractJson,
+  hasEnigmaticTitleSignals,
+  hasSuperlativeTitleSignals,
   isStrongTitle,
   stripHtml,
   truncate,
@@ -20,6 +22,7 @@ const AI_MIN_WORDS = Number(
   process.env.AI_MIN_WORDS || process.env.MIN_WORDS || "350"
 );
 const AI_REWRITE_ATTEMPTS = Number(process.env.AI_REWRITE_ATTEMPTS || "2");
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number(value);
@@ -31,7 +34,10 @@ const MIN_WORDS = parsePositiveInt(AI_MIN_WORDS, 350);
 const REWRITE_ATTEMPTS = Math.min(parsePositiveInt(AI_REWRITE_ATTEMPTS, 2), 4);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+function hasHeadlineStyleIssues(title) {
+  return hasEnigmaticTitleSignals(title) || hasSuperlativeTitleSignals(title);
+}
 
 function ensureHtml(text) {
   if (!text) return "";
@@ -82,23 +88,49 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
     .replace("{{ROLE_CONSTRAINTS}}", roleConstraints)
     .replace("{{MIN_WORDS}}", String(MIN_WORDS));
 
-  if (attempt <= 1 && !meta?.strictRoleMode) return base;
+  if (
+    attempt <= 1 &&
+    !meta?.strictRoleMode &&
+    !meta?.strictStyleMode &&
+    !meta?.strictHeadlineMode
+  ) {
+    return base;
+  }
+
+  const extraRules = [];
 
   if (meta?.strictRoleMode) {
-    return `${base}
-
-ATENTIE CRITICA:
+    extraRules.push(`ATENTIE CRITICA:
 - Exista risc de confuzie intre functiile oficiale (ex: premier vs primar).
 - Verifica explicit fiecare persoana mentionata si pastreaza functia corecta din sursa.
-- Daca nu esti sigur, elimina functia si pastreaza doar numele.`;
+- Daca nu esti sigur, elimina functia si pastreaza doar numele.`);
+  }
+
+  if (meta?.strictStyleMode) {
+    extraRules.push(`ATENTIE DE STIL:
+- Raspunsul anterior a avut formule repetitive.
+- Scrie concis si jurnalistic, cu propozitii scurte.
+- Nu repeta formula "in contextul"; foloseste variatii firesti (ex: "in acest cadru", "potrivit datelor").`);
+  }
+
+  if (meta?.strictHeadlineMode) {
+    extraRules.push(`ATENTIE TITLU:
+- Titlul anterior a fost vag, enigmatic sau hiperbolic.
+- Foloseste un titlu concret, factual, cu actorul principal clar identificat.
+- Evita inceputuri precum "Un jucator", "O vedeta", "Acesta..." daca nu identifici numele.
+- Fara superlative de tip "cel mai", "istoric", "urias" daca nu sunt strict sustinute de date verificabile.`);
+  }
+
+  if (extraRules.length === 0) {
+    extraRules.push(`ATENȚIE:
+- Răspunsul anterior a fost prea scurt.
+- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.
+- Păstrează faptele din textul sursă, fără invenții.`);
   }
 
   return `${base}
 
-ATENȚIE:
-- Răspunsul anterior a fost prea scurt.
-- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.
-- Păstrează faptele din textul sursă, fără invenții.`;
+${extraRules.join("\n\n")}`;
 }
 
 function normalizeArticle(data, originalTitle) {
@@ -143,6 +175,8 @@ function normalizeArticle(data, originalTitle) {
 }
 
 export async function rewriteNews(rawContent, originalTitle, meta = {}) {
+  let strictHeadlineMode = Boolean(meta?.strictHeadlineMode);
+
   for (let attempt = 1; attempt <= REWRITE_ATTEMPTS; attempt += 1) {
     try {
       const response = await client.chat.completions.create({
@@ -151,9 +185,20 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
           {
             role: "system",
             content:
-              "Ești un jurnalist profesionist, riguros factual, precis și clar. Nu speculezi și nu inventezi date.",
+              "Esti un jurnalist profesionist, riguros factual, precis si clar. Evita cliseele, repetiile si limbajul promotional despre alte publicatii.",
           },
-          { role: "user", content: buildPrompt(rawContent, originalTitle, meta, attempt) },
+          {
+            role: "user",
+            content: buildPrompt(
+              rawContent,
+              originalTitle,
+              {
+                ...meta,
+                strictHeadlineMode,
+              },
+              attempt
+            ),
+          },
         ],
         temperature: attempt === 1 ? 0.35 : 0.3,
         max_tokens: 1800 + (attempt - 1) * 250,
@@ -180,17 +225,36 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
 
       if (!isStrongTitle(article.title)) {
         const fallbackTitle = cleanTitle(originalTitle, TITLE_MAX_CHARS);
-        if (isStrongTitle(fallbackTitle)) {
+        if (isStrongTitle(fallbackTitle) && !hasHeadlineStyleIssues(fallbackTitle)) {
           article.title = fallbackTitle;
           article.seo_title = cleanTitle(
             article.seo_title || fallbackTitle,
             SEO_TITLE_MAX_CHARS
           );
         } else if (attempt < REWRITE_ATTEMPTS) {
+          strictHeadlineMode = true;
           console.log("AI RETRY: titlu slab sau incomplet");
           continue;
         } else {
           console.log("AI SKIP: titlu slab sau incomplet");
+          continue;
+        }
+      }
+
+      if (hasHeadlineStyleIssues(article.title)) {
+        const fallbackTitle = cleanTitle(originalTitle, TITLE_MAX_CHARS);
+        if (isStrongTitle(fallbackTitle) && !hasHeadlineStyleIssues(fallbackTitle)) {
+          article.title = fallbackTitle;
+          article.seo_title = cleanTitle(
+            article.seo_title || fallbackTitle,
+            SEO_TITLE_MAX_CHARS
+          );
+        } else if (attempt < REWRITE_ATTEMPTS) {
+          strictHeadlineMode = true;
+          console.log("AI RETRY: titlu vag/superlativ");
+          continue;
+        } else {
+          console.log("AI SKIP: titlu vag/superlativ");
           continue;
         }
       }

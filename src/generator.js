@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import {
   cleanTitle,
   extractJson,
+  hasEnigmaticTitleSignals,
+  hasSuperlativeTitleSignals,
   isStrongTitle,
   normalizeText,
   stripHtml,
@@ -28,14 +30,20 @@ function parsePositiveInt(value, fallback) {
 
 const MIN_WORDS = parsePositiveInt(FALLBACK_MIN_WORDS, 350);
 const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const HOWTO_MIN_WORDS = parsePositiveInt(
   process.env.HOWTO_MIN_WORDS || process.env.MIN_WORDS || "350",
   350
 );
 const HOWTO_ATTEMPTS = Math.min(parsePositiveInt(process.env.HOWTO_ATTEMPTS || "3", 3), 5);
+const HOWTO_DETAIL_MIN_WORDS = parsePositiveInt(
+  process.env.HOWTO_DETAIL_MIN_WORDS || "650",
+  650
+);
+const HOWTO_DETAIL_MIN_H2 = parsePositiveInt(process.env.HOWTO_DETAIL_MIN_H2 || "4", 4);
+const HOWTO_REQUIRE_STEP_HINTS = process.env.HOWTO_REQUIRE_STEP_HINTS !== "false";
 
 const HOWTO_TOPIC_SEEDS = [
   "cum sa schimbi un bec in siguranta",
@@ -51,6 +59,10 @@ const HOWTO_TOPIC_SEEDS = [
   "cum sa iti faci un CV bun",
   "cum sa speli corect hainele albe",
 ];
+
+function hasHeadlineStyleIssues(title) {
+  return hasEnigmaticTitleSignals(title) || hasSuperlativeTitleSignals(title);
+}
 
 function todayRO() {
   return new Date().toLocaleDateString("ro-RO", {
@@ -137,16 +149,57 @@ function normalizeArticle(data) {
   return article;
 }
 
-function buildPrompt(category, attempt) {
+function isHowToCategory(category) {
+  const normalized = normalizeText(category || "");
+  return (
+    normalized.includes("cum sa") ||
+    normalized.includes("cumsa") ||
+    normalized.includes("ghid")
+  );
+}
+
+function requiredWordsForCategory(category) {
+  if (!isHowToCategory(category)) return MIN_WORDS;
+  return Math.max(MIN_WORDS, HOWTO_DETAIL_MIN_WORDS);
+}
+
+function countTagOccurrences(html, tagName) {
+  const source = html || "";
+  const regex = new RegExp(`<${tagName}\\b`, "gi");
+  const matches = source.match(regex);
+  return matches ? matches.length : 0;
+}
+
+function countStepHints(html) {
+  const normalized = normalizeText(stripHtml(html || ""));
+  if (!normalized) return 0;
+  const matches = normalized.match(/\bpas(?:ul|ii?)\b/g);
+  return matches ? matches.length : 0;
+}
+
+function buildPrompt(category, attempt, minWords) {
   const today = todayRO();
+  const howToMode = isHowToCategory(category);
   const extra =
     attempt > 1
       ? `
 
 ATENȚIE:
 - Răspunsul anterior a fost prea scurt sau incomplet.
-- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.`
+- Respectă strict minimum ${minWords} cuvinte în content_html.`
       : "";
+
+  const howToRules = howToMode
+    ? `
+
+CERINTE SUPLIMENTARE PENTRU CATEGORIA "Cum sa?":
+- Scrie un ghid practic, detaliat, pentru incepatori.
+- Include clar: materiale necesare, durata orientativa, cost orientativ, pasi de executie, verificare finala.
+- Fiecare pas trebuie explicat pe larg (ce faci, de ce faci, ce greseli eviti).
+- Include o sectiune despre erori frecvente si o sectiune "Cand sa ceri ajutor specializat".
+- Foloseste cel putin ${HOWTO_DETAIL_MIN_H2} subtitluri H2.
+- Foloseste subtitluri H3 pentru pasi (ex: "Pasul 1", "Pasul 2").`
+    : "";
 
   return `
 Ești jurnalist de știri de actualitate.
@@ -161,13 +214,17 @@ REGULI:
 - Este PERMISĂ menționarea altor ani (2024, 2025 etc.) DOAR ca context secundar
 - NU prezenta evenimente vechi ca fiind actuale
 - NU scrie analize generale sau retrospective
+- NU genera articole despre promovarea altor publicatii, canale, pagini sau emisiuni media
+- Evita repetitia formulei "in contextul"; foloseste exprimari directe si variate
 - Ton: știre de presă, factual, neutru
 - Stil profesionist, natural, fără cuvinte pompoase
 - Propoziții scurte și clare
 - Fără limbaj emoțional, fără umplutură și fără entuziasm fals
-- Evită formulări tabloid (ex.: „șoc”, „bombă”, „de necrezut”)
+- Evită formulări tabloid (ex.: „șoc", „bombă", „de necrezut")
 - Nu ghici, nu inventa date, nu specula
 - Dacă o informație nu poate fi confirmată, spune explicit că nu poate fi confirmată
+- Evită titluri enigmatice (ex.: „un jucător", „o vedetă", „acesta...")
+- Evită superlative de tip „cel mai", „istoric", „uriaș" dacă nu sunt susținute factual
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
@@ -176,6 +233,7 @@ STRUCTURĂ:
 - Include cel puțin 3 subtitluri H2 descriptive
 
 Categoria: ${category}
+${howToRules}
 
 Returnează STRICT JSON, fără markdown:
 {
@@ -196,8 +254,9 @@ REGULI OUTPUT:
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Fără semne de exclamare în titlu.
+- Titlul trebuie să includă clar actorul principal (persoană/club/instituție), nu formulări vagi.
 - Include focus keyword natural în lead și într-un subtitlu H2.
-- Minim ${MIN_WORDS} de cuvinte.
+- Minim ${minWords} de cuvinte.
 ${extra}
 `;
 }
@@ -270,6 +329,8 @@ ${extra}
 }
 
 export async function generateArticle(category) {
+  const requiredWords = requiredWordsForCategory(category);
+  const howToMode = isHowToCategory(category);
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
       const response = await openai.chat.completions.create({
@@ -279,9 +340,9 @@ export async function generateArticle(category) {
           {
             role: "system",
             content:
-              "Ești un jurnalist profesionist de actualitate. Scrii precis, factual, fără speculații și fără exagerări.",
+              "Esti un jurnalist profesionist de actualitate. Scrii factual, concis, fara clisee si fara limbaj promotional despre alte publicatii.",
           },
-          { role: "user", content: buildPrompt(category, attempt) },
+          { role: "user", content: buildPrompt(category, attempt, requiredWords) },
         ],
         max_tokens: 1800 + (attempt - 1) * 250,
         response_format: { type: "json_object" },
@@ -309,14 +370,58 @@ export async function generateArticle(category) {
         continue;
       }
 
-      const words = wordCount(article.content_html);
-      if (words < MIN_WORDS) {
+      if (hasHeadlineStyleIssues(article.title)) {
         if (attempt < ATTEMPTS) {
-          console.log(`GENERATOR RETRY: articol prea scurt (${words}/${MIN_WORDS})`);
+          console.log("GENERATOR RETRY: titlu vag/superlativ");
         } else {
-          console.log(`GENERATOR SKIP: articol prea scurt (${words}/${MIN_WORDS})`);
+          console.log("GENERATOR SKIP: titlu vag/superlativ");
         }
         continue;
+      }
+
+      const words = wordCount(article.content_html);
+      if (words < requiredWords) {
+        if (attempt < ATTEMPTS) {
+          console.log(
+            `GENERATOR RETRY: articol prea scurt (${words}/${requiredWords})`
+          );
+        } else {
+          console.log(
+            `GENERATOR SKIP: articol prea scurt (${words}/${requiredWords})`
+          );
+        }
+        continue;
+      }
+
+      if (howToMode) {
+        const h2Count = countTagOccurrences(article.content_html, "h2");
+        if (h2Count < HOWTO_DETAIL_MIN_H2) {
+          if (attempt < ATTEMPTS) {
+            console.log(
+              `GENERATOR RETRY: ghid prea putin structurat (H2 ${h2Count}/${HOWTO_DETAIL_MIN_H2})`
+            );
+          } else {
+            console.log(
+              `GENERATOR SKIP: ghid prea putin structurat (H2 ${h2Count}/${HOWTO_DETAIL_MIN_H2})`
+            );
+          }
+          continue;
+        }
+        if (HOWTO_REQUIRE_STEP_HINTS) {
+          const stepHints = countStepHints(article.content_html);
+          if (stepHints < 3) {
+            if (attempt < ATTEMPTS) {
+              console.log(
+                `GENERATOR RETRY: ghid fara pasi suficient explicati (${stepHints}/3)`
+              );
+            } else {
+              console.log(
+                `GENERATOR SKIP: ghid fara pasi suficient explicati (${stepHints}/3)`
+              );
+            }
+            continue;
+          }
+        }
       }
 
       return article;

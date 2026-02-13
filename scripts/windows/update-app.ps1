@@ -34,6 +34,7 @@ function Get-GitCandidatesFromGitHubDesktop {
 
   return ($results | Select-Object -Unique)
 }
+
 function Resolve-Executable {
   param(
     [string]$ProvidedPath,

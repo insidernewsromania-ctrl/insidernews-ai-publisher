@@ -3,9 +3,12 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import {
+  buildTopicKey,
   normalizeText,
   slugify,
   stripHtml,
+  topicOverlapRatio,
+  topicTokens,
   truncate,
   uniqueStrings,
 } from "./utils.js";
@@ -41,6 +44,23 @@ function parseCsvPositiveInts(value) {
 
 const DEFAULT_WP_TAG_IDS = parseCsvPositiveInts(process.env.WP_DEFAULT_TAG_IDS || "");
 const mediaUrlCache = new Map();
+
+function parsePositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+const TOPIC_DEDUP_ENABLED = process.env.TOPIC_DEDUP_ENABLED !== "false";
+const TOPIC_OVERLAP_MIN = parsePositiveInt(process.env.TOPIC_OVERLAP_MIN || "4", 4);
+const TOPIC_OVERLAP_RATIO = parsePositiveNumber(
+  process.env.TOPIC_OVERLAP_RATIO || "0.8",
+  0.8
+);
+const RECENT_DUPLICATE_POSTS_LIMIT = parsePositiveInt(
+  process.env.RECENT_DUPLICATE_POSTS_LIMIT || "25",
+  25
+);
 
 function wpBaseUrl() {
   const base = process.env.WP_URL || "";
@@ -238,6 +258,7 @@ async function searchPostsByTitle(title) {
   return res.data || [];
 }
 
+<<<<<<< HEAD
 async function hasRecentPostWithSourceHash(hash) {
   if (!hash) return false;
   const params = new URLSearchParams({
@@ -254,6 +275,33 @@ async function hasRecentPostWithSourceHash(hash) {
     if (slug === legacy) return true;
     return slug.endsWith(`-${hash}`);
   });
+=======
+function overlapCount(aTokens = [], bTokens = []) {
+  const a = new Set(aTokens);
+  const b = new Set(bTokens);
+  let overlap = 0;
+  for (const token of a) {
+    if (b.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+function isNearTopicDuplicate(aTokens = [], bTokens = []) {
+  if (!Array.isArray(aTokens) || !Array.isArray(bTokens)) return false;
+  if (aTokens.length === 0 || bTokens.length === 0) return false;
+  const ratio = topicOverlapRatio(aTokens, bTokens);
+  if (!Number.isFinite(ratio) || ratio < TOPIC_OVERLAP_RATIO) return false;
+  return overlapCount(aTokens, bTokens) >= TOPIC_OVERLAP_MIN;
+}
+
+async function recentPostsForDuplicateCheck() {
+  const limit = Math.max(5, Math.min(RECENT_DUPLICATE_POSTS_LIMIT, 50));
+  const path = wpApi(
+    `/posts?per_page=${limit}&orderby=date&order=desc&_fields=id,title.rendered,date,slug`
+  );
+  const res = await axios.get(path, { auth });
+  return res.data || [];
+>>>>>>> cursor/push-to-main-branch-6df7
 }
 
 export async function isPostDuplicate(input) {
@@ -306,6 +354,29 @@ export async function isPostDuplicate(input) {
       return false;
     });
     if (hasMatch) return true;
+  }
+
+  if (TOPIC_DEDUP_ENABLED) {
+    const inputTopicKey = buildTopicKey(sourceTitle || title || seoTitle);
+    if (inputTopicKey) {
+      const inputTopicTokens = topicTokens(inputTopicKey);
+      try {
+        const recentPosts = await recentPostsForDuplicateCheck();
+        for (const post of recentPosts) {
+          const rendered = stripHtml(post?.title?.rendered || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          const postTopicKey = buildTopicKey(rendered);
+          if (!postTopicKey) continue;
+          if (postTopicKey === inputTopicKey) return true;
+          if (isNearTopicDuplicate(inputTopicTokens, topicTokens(postTopicKey))) {
+            return true;
+          }
+        }
+      } catch (err) {
+        console.warn("WP semantic duplicate check skipped:", err.message);
+      }
+    }
   }
 
   return false;

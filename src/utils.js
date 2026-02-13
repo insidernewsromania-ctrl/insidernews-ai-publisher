@@ -67,6 +67,55 @@ const TITLE_END_STOPWORDS = new Set([
   "o",
 ]);
 
+const VAGUE_SUBJECT_TERMS = [
+  "jucator",
+  "sportiv",
+  "fotbalist",
+  "atacant",
+  "fundas",
+  "portar",
+  "antrenor",
+  "vedeta",
+  "actor",
+  "cantaret",
+  "artist",
+  "politician",
+  "demnitar",
+  "afacerist",
+  "milionar",
+  "roman",
+  "romanca",
+  "tanar",
+  "tanara",
+  "barbat",
+  "femeie",
+  "elev",
+  "profesor",
+  "medic",
+  "sofer",
+  "persoana",
+];
+
+const ENIGMATIC_TITLE_PATTERNS = [
+  /^(?:acest|aceasta|acesta|acestea|el|ea)\b/,
+  /\b(?:ce\s+a\s+urmat|uite\s+cine|nu\s+o\s+sa\s+iti\s+vina\s+sa\s+crezi)\b/,
+  /\b(?:mister|misterios|enigmatic)\b/,
+];
+
+const SUPERLATIVE_TITLE_PHRASES = [
+  "soc total",
+  "de necrezut",
+  "halucinant",
+  "fara precedent",
+  "record absolut",
+  "istoric",
+  "urias",
+  "uriasa",
+  "colosal",
+  "exploziv",
+  "senzational",
+];
+
 const INCOMPLETE_CONNECTOR_SEQUENCES = [
   ["in", "timp", "ce"],
   ["dupa", "ce"],
@@ -103,6 +152,85 @@ const PUBLISHER_SUFFIX_HINTS = [
   "google news",
 ];
 
+const SOURCE_ATTRIBUTION_CUES = [
+  "potrivit",
+  "conform",
+  "citand",
+  "citeaza",
+  "scrie",
+  "anunta",
+  "transmite",
+  "informeaza",
+  "relateaza",
+];
+
+const TOPIC_NOISE_TOKENS = new Set([
+  "a",
+  "al",
+  "ale",
+  "anunta",
+  "anuntat",
+  "anuntata",
+  "anuntate",
+  "au",
+  "ca",
+  "care",
+  "catre",
+  "ce",
+  "com",
+  "conform",
+  "cu",
+  "de",
+  "despre",
+  "din",
+  "dupa",
+  "este",
+  "fata",
+  "fi",
+  "for",
+  "g4",
+  "g4media",
+  "in",
+  "insa",
+  "la",
+  "libertatea",
+  "media",
+  "mediafax",
+  "news",
+  "newsro",
+  "online",
+  "or",
+  "pe",
+  "pentru",
+  "profit",
+  "protv",
+  "potrivit",
+  "prin",
+  "publica",
+  "publicat",
+  "publicata",
+  "publicate",
+  "ro",
+  "sau",
+  "si",
+  "site",
+  "stirileprotv",
+  "stiri",
+  "the",
+  "to",
+  "tv",
+  "digi24",
+  "hotnews",
+  "adevarul",
+  "euronews",
+  "observator",
+  "antena3",
+  "un",
+  "unei",
+  "unor",
+  "www",
+]);
+
 function looksLikePublisherSuffix(text) {
   if (!text) return false;
   const normalized = normalizeText(text);
@@ -129,6 +257,42 @@ function trimPublisherSuffix(text) {
   const suffix = segments[segments.length - 1];
   if (!looksLikePublisherSuffix(suffix)) return text || "";
   return segments.slice(0, -1).join(" - ").trim();
+}
+
+function looksLikeMediaSourceFragment(text) {
+  if (!text) return false;
+  if (looksLikePublisherSuffix(text)) return true;
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  if (/\b[a-z0-9-]+\.[a-z]{2,}\b/.test(normalized)) return true;
+  if (
+    normalized.includes("news") ||
+    normalized.includes("media") ||
+    normalized.includes("tv")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function trimSourceAttributionSuffix(text) {
+  let current = (text || "").toString().trim();
+  if (!current) return "";
+  for (let i = 0; i < 2; i += 1) {
+    const match = current.match(
+      /(?:,\s*|\s[-–—|]\s*)(potrivit|conform|citand|citeaza|scrie|anunta|transmite|informeaza|relateaza)\s+([^,;:.!?]+)$/i
+    );
+    if (!match || typeof match.index !== "number") break;
+    const cue = normalizeText(match[1] || "");
+    if (!SOURCE_ATTRIBUTION_CUES.includes(cue)) break;
+    const sourcePart = (match[2] || "").trim();
+    if (!looksLikeMediaSourceFragment(sourcePart)) break;
+    current = current
+      .slice(0, match.index)
+      .replace(/[-–—:;,.!? ]+$/, "")
+      .trim();
+  }
+  return current;
 }
 
 function hasWordSequenceAt(words, startIndex, sequence) {
@@ -183,9 +347,18 @@ function trimTrailingStopwords(text) {
   return current;
 }
 
+function hasExplicitEntityMarker(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  if (/\b[A-Z0-9]{2,}\b/.test(value)) return true;
+  if (/\b[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\s+[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\b/.test(value)) return true;
+  return false;
+}
+
 export function cleanTitle(text, maxLength = 110) {
   if (!text) return "";
-  const withoutSuffix = trimPublisherSuffix(text.toString());
+  const withoutAttribution = trimSourceAttributionSuffix(text.toString());
+  const withoutSuffix = trimPublisherSuffix(withoutAttribution);
   const normalized = withoutSuffix
     .toString()
     .replace(/\s+/g, " ")
@@ -196,6 +369,43 @@ export function cleanTitle(text, maxLength = 110) {
   const truncated = truncateAtWord(normalized, maxLength);
   const trimmedStopwords = trimTrailingStopwords(truncated);
   return trimTrailingStopwords(trimIncompleteEnding(trimmedStopwords));
+}
+
+export function buildTopicKey(text, maxTokens = 8) {
+  const cleaned = trimSourceAttributionSuffix(cleanTitle(text || "", 220));
+  const normalized = normalizeText(cleaned);
+  if (!normalized) return "";
+  const tokens = normalized
+    .split(" ")
+    .filter(Boolean)
+    .filter(token => token.length >= 3)
+    .filter(token => !TOPIC_NOISE_TOKENS.has(token))
+    .filter(token => !/^\d+$/.test(token));
+  if (tokens.length === 0) return "";
+  const limit = Number.isFinite(maxTokens)
+    ? Math.max(3, Math.floor(maxTokens))
+    : 8;
+  return tokens.slice(0, limit).join(" ");
+}
+
+export function topicTokens(text, maxTokens = 12) {
+  const key = buildTopicKey(text, maxTokens);
+  return key ? key.split(" ") : [];
+}
+
+export function topicOverlapRatio(aTokens = [], bTokens = []) {
+  if (!Array.isArray(aTokens) || !Array.isArray(bTokens)) return 0;
+  if (aTokens.length === 0 || bTokens.length === 0) return 0;
+  const a = new Set(aTokens.filter(Boolean));
+  const b = new Set(bTokens.filter(Boolean));
+  if (a.size === 0 || b.size === 0) return 0;
+  let overlap = 0;
+  for (const token of a) {
+    if (b.has(token)) overlap += 1;
+  }
+  const denominator = Math.min(a.size, b.size);
+  if (denominator === 0) return 0;
+  return overlap / denominator;
 }
 
 export function hasSuspiciousTitleEnding(text) {
@@ -215,6 +425,38 @@ export function isStrongTitle(text, minWords = 5) {
   const words = normalizeText(cleaned).split(" ").filter(Boolean);
   if (words.length < minWords) return false;
   return !hasSuspiciousTitleEnding(cleaned);
+}
+
+export function hasEnigmaticTitleSignals(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+
+  if (ENIGMATIC_TITLE_PATTERNS.some(pattern => pattern.test(normalized))) {
+    return true;
+  }
+
+  const vagueSubjectPattern = new RegExp(
+    `\\b(?:un|o)\\s+(?:${VAGUE_SUBJECT_TERMS.join("|")})\\b`
+  );
+  if (vagueSubjectPattern.test(normalized) && !hasExplicitEntityMarker(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function hasSuperlativeTitleSignals(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  if (SUPERLATIVE_TITLE_PHRASES.some(phrase => normalized.includes(phrase))) {
+    return true;
+  }
+  if (/\b(?:cel|cea|cei|cele)\s+mai\b/.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractJson(text) {
