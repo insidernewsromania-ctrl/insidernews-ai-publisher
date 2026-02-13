@@ -39,6 +39,71 @@ function buildItemKey(item) {
   return hash(`${titleKey}|${linkKey}|${guidKey}`);
 }
 
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function extractHtmlImageSources(html = "") {
+  const source = `${html || ""}`;
+  if (!source) return [];
+  const matches = [];
+  const pattern = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    matches.push(match[1]);
+    if (matches.length >= 12) break;
+  }
+  return matches;
+}
+
+function extractMediaUrls(mediaValue) {
+  const values = [];
+  for (const entry of asArray(mediaValue)) {
+    if (!entry) continue;
+    if (typeof entry === "string") {
+      values.push(entry);
+      continue;
+    }
+    if (typeof entry?.url === "string") values.push(entry.url);
+    if (typeof entry?.href === "string") values.push(entry.href);
+    if (typeof entry?.link === "string") values.push(entry.link);
+    if (typeof entry?.$?.url === "string") values.push(entry.$.url);
+    if (typeof entry?.$?.href === "string") values.push(entry.$.href);
+  }
+  return values;
+}
+
+function uniqueStrings(values = []) {
+  const seen = new Set();
+  const output = [];
+  for (const raw of values) {
+    const value = `${raw || ""}`.trim();
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
+}
+
+function extractImageCandidates(item) {
+  const candidates = [
+    item?.enclosure?.url,
+    item?.enclosure?.link,
+    item?.image?.url,
+    item?.image,
+    item?.itunes?.image,
+    item?.["itunes:image"]?.href,
+    item?.["media:thumbnail"]?.url,
+    item?.["media:thumbnail"]?.href,
+    ...extractMediaUrls(item?.["media:content"]),
+    ...extractMediaUrls(item?.["media:thumbnail"]),
+    ...extractHtmlImageSources(item?.content),
+    ...extractHtmlImageSources(item?.["content:encoded"]),
+  ];
+  return uniqueStrings(candidates);
+}
 function shuffle(values) {
   const items = [...values];
   for (let i = items.length - 1; i > 0; i -= 1) {
@@ -77,6 +142,7 @@ async function fetchSource(source) {
         categoryId: source.categoryId,
         source: source.name,
         publishedAt: item.isoDate || item.pubDate || item.published || null,
+        imageCandidates: extractImageCandidates(item),
       }))
       .filter(item => item.title || item.content);
     return sortByRecency(normalized).slice(0, source.maxPerRun);

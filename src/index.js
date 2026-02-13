@@ -10,7 +10,7 @@ import {
   isPostDuplicate,
 } from "./wordpress.js";
 import { addInternalLinksToHtml } from "./internal-links.js";
-import { downloadImage } from "./image.js";
+import { downloadImage, downloadImageFromSource } from "./image.js";
 import { isDuplicate, saveTopic } from "./history.js";
 import {
   buildRoleConstraintsFromClaims,
@@ -351,6 +351,9 @@ const NEWS_TIMEZONE = process.env.NEWS_TIMEZONE || "Europe/Bucharest";
 const ALLOW_FALLBACK = process.env.ALLOW_FALLBACK === "true";
 const REQUIRE_IMAGE = process.env.REQUIRE_IMAGE === "true";
 const USE_DYNAMIC_IMAGE = process.env.USE_DYNAMIC_IMAGE === "true";
+const SOURCE_FEATURED_IMAGE_ENABLED = process.env.SOURCE_FEATURED_IMAGE_ENABLED !== "false";
+const SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT =
+  process.env.SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT !== "false";
 const DEFAULT_FEATURED_MEDIA_ID = parsePositiveInt(
   process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
   0
@@ -1711,14 +1714,47 @@ function prepareCandidates(items) {
   };
 }
 
-async function maybeUploadImage(article) {
-  if (DEFAULT_FEATURED_MEDIA_ID > 0) {
+async function maybeUploadImage(article, sourceItem = null) {
+  const hasDefaultImage = DEFAULT_FEATURED_MEDIA_ID > 0;
+  if (hasDefaultImage && !SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT) {
     return DEFAULT_FEATURED_MEDIA_ID;
   }
+
+  let imageId = null;
+  if (SOURCE_FEATURED_IMAGE_ENABLED) {
+    try {
+      const sourceUrl = `${sourceItem?.link || ""}`.trim();
+      const sourceCandidates = Array.isArray(sourceItem?.imageCandidates)
+        ? sourceItem.imageCandidates
+        : [];
+      if (sourceUrl || sourceCandidates.length > 0) {
+        const sourceImage = await downloadImageFromSource(sourceUrl, sourceCandidates);
+        if (sourceImage?.filePath) {
+          imageId = await uploadImage({
+            filePath: sourceImage.filePath,
+            fileName: sourceImage.fileName,
+            contentType: sourceImage.contentType,
+            cleanupFile: true,
+            title: article.seo_title || article.title,
+            altText: article.title || article.focus_keyword,
+            caption: article.meta_description || "",
+          });
+          if (imageId) return imageId;
+        }
+      }
+    } catch (err) {
+      console.log("Source image skipped:", err.message);
+    }
+  }
+
+  if (hasDefaultImage) {
+    return DEFAULT_FEATURED_MEDIA_ID;
+  }
+
   if (!USE_DYNAMIC_IMAGE) {
     return null;
   }
-  let imageId = null;
+
   try {
     const query = article.focus_keyword || article.title;
     if (query) {
@@ -1785,8 +1821,14 @@ async function publishPostWithRetry(
   return false;
 }
 
-async function tryPublishArticle(article, categoryId, sourceUrl, sourceTitle = "") {
-  if (isDuplicate({ title: article.title, url: sourceUrl })) {
+async function tryPublishArticle(
+  article,
+  categoryId,
+  sourceUrl,
+  sourceTitle = "",
+  sourceItem = null
+) {
+  if (isDuplicate({ title: article.title, sourceTitle, url: sourceUrl })) {
     console.log("Duplicate detected in history. Skipping.");
     return false;
   }
@@ -1814,7 +1856,10 @@ async function tryPublishArticle(article, categoryId, sourceUrl, sourceTitle = "
     console.warn("WP duplicate check failed:", err.message);
   }
 
-  const imageId = await maybeUploadImage(article);
+  const imageId = await maybeUploadImage(
+    article,
+    sourceItem || (sourceUrl ? { link: sourceUrl } : null)
+  );
 
   if (REQUIRE_IMAGE && !imageId) {
     console.log("Image required but missing. Skipping.");
@@ -1963,7 +2008,7 @@ async function publishFromRssItem(item) {
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link, item.title);
+  return tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
 }
 
 async function publishFallbackArticle() {
