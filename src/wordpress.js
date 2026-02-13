@@ -258,7 +258,6 @@ async function searchPostsByTitle(title) {
   return res.data || [];
 }
 
-<<<<<<< HEAD
 async function hasRecentPostWithSourceHash(hash) {
   if (!hash) return false;
   const params = new URLSearchParams({
@@ -275,7 +274,8 @@ async function hasRecentPostWithSourceHash(hash) {
     if (slug === legacy) return true;
     return slug.endsWith(`-${hash}`);
   });
-=======
+}
+
 function overlapCount(aTokens = [], bTokens = []) {
   const a = new Set(aTokens);
   const b = new Set(bTokens);
@@ -301,7 +301,6 @@ async function recentPostsForDuplicateCheck() {
   );
   const res = await axios.get(path, { auth });
   return res.data || [];
->>>>>>> cursor/push-to-main-branch-6df7
 }
 
 export async function isPostDuplicate(input) {
