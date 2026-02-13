@@ -18,6 +18,7 @@ import {
   findRoleMismatches,
   formatRoleMismatchSummary,
 } from "./facts.js";
+import { resolveCanonicalSourceUrl, resolveSourceName } from "./source-link.js";
 import {
   cleanTitle,
   hoursSince,
@@ -1065,6 +1066,36 @@ function roleMismatchSummary(item, article, sourceClaims) {
   return findRoleMismatches(sourceClaims, generatedText);
 }
 
+async function withResolvedSourceItem(item) {
+  if (!item) return item;
+
+  const fallbackLink = `${item.link || ""}`.trim();
+  let resolvedLink = fallbackLink;
+  try {
+    resolvedLink = await resolveCanonicalSourceUrl(fallbackLink);
+  } catch {
+    resolvedLink = fallbackLink;
+  }
+
+  const sourceName = resolveSourceName(item, resolvedLink);
+  const nextLink = resolvedLink || fallbackLink;
+  const nextSource = sourceName || item.source || "Sursa";
+
+  if (nextLink && fallbackLink && nextLink !== fallbackLink) {
+    console.log(`Resolved source URL: ${fallbackLink} -> ${nextLink}`);
+  }
+
+  if (nextLink === fallbackLink && nextSource === (item.source || "")) {
+    return item;
+  }
+
+  return {
+    ...item,
+    link: nextLink,
+    source: nextSource,
+  };
+}
+
 function containsNormalized(haystack, needle) {
   const left = normalizeText(haystack || "");
   const right = normalizeText(needle || "");
@@ -1953,51 +1984,55 @@ async function tryPublishArticle(
 }
 
 async function publishFromRssItem(item) {
-  if (isDuplicate({ title: item.title, url: item.link })) {
-    console.log("Duplicate source item. Skipping:", item.title);
+  const sourceItem = await withResolvedSourceItem(item);
+
+  if (isDuplicate({ title: sourceItem.title, url: sourceItem.link })) {
+    console.log("Duplicate source item. Skipping:", sourceItem.title);
     return false;
   }
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
-    (isLikelyMediaOutletPromotion(item) ||
-      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+    (isLikelyMediaOutletPromotion(sourceItem) ||
+      isHardBlockedMediaOutletPromoText(
+        `${sourceItem?.title || ""} ${sourceItem?.content || ""}`
+      ))
   ) {
-    console.log("Rejected media-outlet promo item. Skipping:", item.title);
+    console.log("Rejected media-outlet promo item. Skipping:", sourceItem.title);
     return false;
   }
 
-  const raw = [item.title, item.content].filter(Boolean).join("\n\n");
+  const raw = [sourceItem.title, sourceItem.content].filter(Boolean).join("\n\n");
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
-    ? buildSourceRoleClaims(item)
+    ? buildSourceRoleClaims(sourceItem)
     : new Map();
   const roleConstraints = buildRoleConstraintsFromClaims(sourceRoleClaims);
 
-  let article = await rewriteNews(raw, item.title, {
-    publishedAt: item.publishedAt,
-    source: item.source,
-    link: item.link,
+  let article = await rewriteNews(raw, sourceItem.title, {
+    publishedAt: sourceItem.publishedAt,
+    source: sourceItem.source,
+    link: sourceItem.link,
     roleConstraints,
   });
 
   if (!article) return false;
 
   if (ROLE_FACT_CHECK_ENABLED && sourceRoleClaims.size > 0) {
-    let mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+    let mismatches = roleMismatchSummary(sourceItem, article, sourceRoleClaims);
     if (mismatches.length > 0) {
       console.log(
         "Role mismatch detected, retrying strict factual mode:",
         formatRoleMismatchSummary(mismatches)
       );
-      article = await rewriteNews(raw, item.title, {
-        publishedAt: item.publishedAt,
-        source: item.source,
-        link: item.link,
+      article = await rewriteNews(raw, sourceItem.title, {
+        publishedAt: sourceItem.publishedAt,
+        source: sourceItem.source,
+        link: sourceItem.link,
         roleConstraints,
         strictRoleMode: true,
       });
       if (!article) return false;
 
-      mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+      mismatches = roleMismatchSummary(sourceItem, article, sourceRoleClaims);
       if (mismatches.length > 0) {
         console.log(
           "Role mismatch persists. Skipping article:",
@@ -2009,7 +2044,7 @@ async function publishFromRssItem(item) {
   }
 
   article.content_html = sanitizeContent(article.content_html);
-  ensureSeoFields(article, item.title);
+  ensureSeoFields(article, sourceItem.title);
 
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
@@ -2025,7 +2060,7 @@ async function publishFromRssItem(item) {
   }
 
   if (!isStrongTitle(article.title)) {
-    const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
+    const fallbackTitle = cleanTitle(sourceItem.title, TITLE_MAX_CHARS);
     if (!isStrongTitle(fallbackTitle)) {
       console.log("Title quality too low. Skipping.");
       return false;
@@ -2042,14 +2077,14 @@ async function publishFromRssItem(item) {
     return false;
   }
 
-  const categoryDecision = resolveCategoryId(item, article);
+  const categoryDecision = resolveCategoryId(sourceItem, article);
   const targetCategoryId = categoryDecision.categoryId;
   if (categoryDecision.changed) {
     const scoreText = categories
       .map(category => `${category.name}:${categoryDecision.scores[category.id] || 0}`)
       .join(", ");
     console.log(
-      `Category override: ${categoryNameById(item.categoryId)} -> ${categoryNameById(
+      `Category override: ${categoryNameById(sourceItem.categoryId)} -> ${categoryNameById(
         targetCategoryId
       )} [${categoryDecision.reason}] (${scoreText})`
     );
@@ -2065,12 +2100,12 @@ async function publishFromRssItem(item) {
   }
   article.content_html = removeExternalLinks(article.content_html);
   applyTableOfContents(article);
-  appendSourceAttribution(article, item);
+  appendSourceAttribution(article, sourceItem);
   appendEditorialNote(article);
 
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article, {
-      expectsSourceAttribution: Boolean(item?.link),
+      expectsSourceAttribution: Boolean(sourceItem?.link),
     });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
@@ -2078,7 +2113,13 @@ async function publishFromRssItem(item) {
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
+  return tryPublishArticle(
+    article,
+    targetCategoryId,
+    sourceItem.link,
+    sourceItem.title,
+    sourceItem
+  );
 }
 
 async function publishFallbackArticle() {
