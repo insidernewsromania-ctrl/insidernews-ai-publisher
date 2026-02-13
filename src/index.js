@@ -1274,6 +1274,42 @@ function hasEditorialNoteBlock(html) {
   return /data-editorial-note="true"/i.test(html || "");
 }
 
+function containsAnyTerm(normalizedText, terms = []) {
+  if (!normalizedText) return false;
+  for (const term of terms) {
+    if (!term) continue;
+    if (normalizedText.includes(term)) return true;
+  }
+  return false;
+}
+
+function isLikelyMediaOutletPromotionText(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  const hasOutlet = containsAnyTerm(normalized, MEDIA_OUTLET_TERMS);
+  const hasPhrase = containsAnyTerm(normalized, MEDIA_PROMO_PHRASES);
+  const matchesGenericPattern = GENERIC_MEDIA_PROMO_PATTERNS.some(pattern =>
+    pattern.test(normalized)
+  );
+  if (!hasOutlet && !hasPhrase && !matchesGenericPattern) return false;
+
+  const hasPromoVerb = containsAnyTerm(normalized, MEDIA_PROMO_VERBS);
+  const hasPromoTarget = containsAnyTerm(normalized, MEDIA_PROMO_TARGET_TERMS);
+  const mentionsNumericPage =
+    /\bpagina\s+\d{3,}\b/.test(normalized) || /\bpage\s+\d{3,}\b/.test(normalized);
+  const mentionsProgramSignals =
+    /\b(?:stiri|news)\s+(?:video|online)\b/.test(normalized) ||
+    /\b(?:editie|sezon|episod)\b/.test(normalized);
+
+  if (mentionsNumericPage) return true;
+  if (hasPhrase && (hasOutlet || hasPromoVerb || hasPromoTarget)) return true;
+  if (matchesGenericPattern && (hasOutlet || hasPromoVerb || hasPromoTarget)) return true;
+  if (matchesGenericPattern && !hasOutlet) return true;
+  if (hasPromoVerb && hasPromoTarget) return true;
+  if (hasPromoVerb && mentionsProgramSignals) return true;
+  return false;
+}
+
 function isHardBlockedMediaOutletPromoText(text) {
   const normalized = normalizeText(text || "");
   if (!normalized) return false;
