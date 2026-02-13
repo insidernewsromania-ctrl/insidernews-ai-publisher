@@ -26,6 +26,7 @@ const DEFAULT_WP_FEATURED_MEDIA_ID = parsePositiveInt(
   process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
   0
 );
+const SOCIAL_IMAGE_META_ENABLED = process.env.SOCIAL_IMAGE_META_ENABLED !== "false";
 
 function parseCsvPositiveInts(value) {
   return uniqueStrings(
@@ -39,6 +40,7 @@ function parseCsvPositiveInts(value) {
 }
 
 const DEFAULT_WP_TAG_IDS = parseCsvPositiveInts(process.env.WP_DEFAULT_TAG_IDS || "");
+const mediaUrlCache = new Map();
 
 function wpBaseUrl() {
   const base = process.env.WP_URL || "";
@@ -47,6 +49,30 @@ function wpBaseUrl() {
 
 function wpApi(path) {
   return `${wpBaseUrl()}/wp-json/wp/v2${path}`;
+}
+
+async function getMediaSourceUrl(mediaId) {
+  const id = parsePositiveInt(mediaId, 0);
+  if (id <= 0) return "";
+  if (mediaUrlCache.has(id)) return mediaUrlCache.get(id) || "";
+
+  const requestPath = wpApi(`/media/${id}?_fields=id,source_url`);
+  try {
+    const res = await axios.get(requestPath, { auth });
+    const url = `${res?.data?.source_url || ""}`.trim();
+    mediaUrlCache.set(id, url);
+    return url;
+  } catch (authErr) {
+    try {
+      const res = await axios.get(requestPath);
+      const url = `${res?.data?.source_url || ""}`.trim();
+      mediaUrlCache.set(id, url);
+      return url;
+    } catch (err) {
+      mediaUrlCache.set(id, "");
+      return "";
+    }
+  }
 }
 
 function dayKeyInTimeZone(date, timeZone) {
@@ -461,6 +487,17 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
     0
   );
   if (preferredFeaturedMediaId > 0) payload.featured_media = preferredFeaturedMediaId;
+  if (SOCIAL_IMAGE_META_ENABLED && preferredFeaturedMediaId > 0) {
+    const featuredImageUrl = await getMediaSourceUrl(preferredFeaturedMediaId);
+    if (featuredImageUrl) {
+      meta.rank_math_facebook_image = featuredImageUrl;
+      meta.rank_math_twitter_image = featuredImageUrl;
+      meta.rank_math_facebook_image_id = String(preferredFeaturedMediaId);
+      meta.rank_math_twitter_image_id = String(preferredFeaturedMediaId);
+      meta.yoast_wpseo_opengraph_image = featuredImageUrl;
+      meta.yoast_wpseo_twitter_image = featuredImageUrl;
+    }
+  }
   const excerptSource =
     article.meta_description ||
     stripHtml(article.content_html || "").replace(/\s+/g, " ").trim();
