@@ -1,8 +1,9 @@
 import { collectNews } from "./rss.js";
 import { rewriteNews } from "./ai.js";
-import { generateArticle } from "./generator.js";
+import { generateArticle, generateHowToArticle } from "./generator.js";
 import {
   buildStablePostSlug,
+  countPostsPublishedTodayByCategory,
   getRecentPostsForInternalLinks,
   publishPost,
   uploadImage,
@@ -17,6 +18,11 @@ import {
   findRoleMismatches,
   formatRoleMismatchSummary,
 } from "./facts.js";
+import {
+  isGoogleNewsArticleUrl,
+  resolveCanonicalSourceUrl,
+  resolveSourceName,
+} from "./source-link.js";
 import {
   cleanTitle,
   hasEnigmaticTitleSignals,
@@ -37,6 +43,8 @@ const categories = [
   { name: "social", id: 4063 },
   { name: "economie", id: 4064 },
   { name: "externe", id: 4060 },
+  { name: "sport", id: 821 },
+  { name: "auto", id: 4780 },
 ];
 const categoryById = new Map(categories.map(category => [category.id, category]));
 
@@ -104,7 +112,6 @@ const CATEGORY_KEYWORDS = {
       "vremea",
       "transport public",
       "consumator",
-      "sport",
       "turism",
       "cultura",
       "societate",
@@ -174,6 +181,78 @@ const CATEGORY_KEYWORDS = {
       "diplomatic",
     ],
   },
+  821: {
+    strong: [
+      "sport",
+      "fotbal",
+      "meci",
+      "campionat",
+      "liga 1",
+      "superliga",
+      "fcsb",
+      "dinamo",
+      "rapid",
+      "cfr cluj",
+      "simona halep",
+      "tenis",
+      "handbal",
+      "baschet",
+      "olimpiada",
+    ],
+    normal: [
+      "antrenor",
+      "jucator",
+      "transfer",
+      "scor",
+      "gol",
+      "stadion",
+      "arbitru",
+      "derby",
+      "cupa",
+      "finala",
+      "calificare",
+      "nationala",
+      "echipa",
+      "campion",
+    ],
+  },
+  4780: {
+    strong: [
+      "auto",
+      "masina",
+      "masini",
+      "automobil",
+      "autoturism",
+      "dacia",
+      "renault",
+      "bmw",
+      "mercedes",
+      "audi",
+      "toyota",
+      "tesla",
+      "electrica",
+      "hibrid",
+      "service auto",
+      "itp",
+      "rovigneta",
+    ],
+    normal: [
+      "sofer",
+      "soferi",
+      "caroserie",
+      "motor",
+      "consum",
+      "asigurare rca",
+      "casco",
+      "anvelope",
+      "vulcanizare",
+      "inmatriculare",
+      "drumuri",
+      "trafic rutier",
+      "accident rutier",
+      "cod rutier",
+    ],
+  },
 };
 
 const POLITICS_DECISIVE_TERMS = [
@@ -207,6 +286,35 @@ const SOCIAL_DECISIVE_TERMS = [
   "ghid",
 ];
 
+const SPORT_DECISIVE_TERMS = [
+  "sport",
+  "fotbal",
+  "meci",
+  "campionat",
+  "liga 1",
+  "superliga",
+  "tenis",
+  "handbal",
+  "baschet",
+  "antrenor",
+  "jucator",
+];
+
+const AUTO_DECISIVE_TERMS = [
+  "auto",
+  "masina",
+  "masini",
+  "automobil",
+  "dacia",
+  "bmw",
+  "mercedes",
+  "audi",
+  "toyota",
+  "tesla",
+  "sofer",
+  "cod rutier",
+];
+
 function parsePositiveInt(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -217,6 +325,26 @@ function parseNonNegativeInt(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.floor(parsed);
+}
+
+function parseHowToSlots(value) {
+  const raw = `${value || ""}`.trim();
+  if (!raw) return [];
+  const slots = raw
+    .split(",")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const match = part.match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) return null;
+      const hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+      return hour * 60 + minute;
+    })
+    .filter(valueMinute => Number.isFinite(valueMinute));
+  return [...new Set(slots)].sort((a, b) => a - b);
 }
 
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
@@ -261,8 +389,8 @@ const PUBLISH_WINDOW_START_HOUR = parsePositiveInt(
   8
 );
 const PUBLISH_WINDOW_END_HOUR = parsePositiveInt(
-  process.env.PUBLISH_WINDOW_END_HOUR || "20",
-  20
+  process.env.PUBLISH_WINDOW_END_HOUR || "22",
+  22
 );
 const PUBLISH_WINDOW_TIMEZONE =
   process.env.PUBLISH_WINDOW_TIMEZONE || NEWS_TIMEZONE;
@@ -311,6 +439,65 @@ const DEFAULT_UNCERTAIN_CATEGORY_ID = parsePositiveInt(
   process.env.DEFAULT_UNCERTAIN_CATEGORY_ID || "7",
   7
 );
+const SOURCE_ATTRIBUTION_ENABLED = process.env.SOURCE_ATTRIBUTION_ENABLED !== "false";
+const SOURCE_ATTRIBUTION_REQUIRE_LINK =
+  process.env.SOURCE_ATTRIBUTION_REQUIRE_LINK !== "false";
+const EDITORIAL_NOTE_ENABLED = process.env.EDITORIAL_NOTE_ENABLED !== "false";
+const EDITORIAL_AUTHOR_NAME = (
+  process.env.EDITORIAL_AUTHOR_NAME || "Gabriel Andrei"
+)
+  .toString()
+  .trim();
+const EDITORIAL_AUTHOR_PROFILE_URL = (
+  process.env.EDITORIAL_AUTHOR_PROFILE_URL || "https://insidernews.ro/author/gabriel/"
+)
+  .toString()
+  .trim();
+const EDITORIAL_POLICY_URL = (process.env.EDITORIAL_POLICY_URL || "")
+  .toString()
+  .trim();
+const RIGHT_OF_REPLY_URL = (process.env.RIGHT_OF_REPLY_URL || "")
+  .toString()
+  .trim();
+const CORRECTIONS_EMAIL = (process.env.CORRECTIONS_EMAIL || "")
+  .toString()
+  .trim();
+const BLOCK_TABLOID_TITLES = process.env.BLOCK_TABLOID_TITLES !== "false";
+const BLOCK_ENIGMATIC_TITLES = process.env.BLOCK_ENIGMATIC_TITLES !== "false";
+const BLOCK_SUPERLATIVE_TITLES = process.env.BLOCK_SUPERLATIVE_TITLES !== "false";
+const TABLE_OF_CONTENTS_ENABLED = process.env.TABLE_OF_CONTENTS_ENABLED !== "false";
+const TABLE_OF_CONTENTS_TITLE = (process.env.TABLE_OF_CONTENTS_TITLE || "Cuprins")
+  .toString()
+  .trim();
+const TABLE_OF_CONTENTS_MAX_ITEMS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MAX_ITEMS || "8",
+  8
+);
+const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MIN_HEADINGS || "1",
+  1
+);
+const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
+const HOWTO_DAILY_ENABLED = process.env.HOWTO_DAILY_ENABLED !== "false";
+const HOWTO_DAILY_CATEGORY_ID = parsePositiveInt(
+  process.env.HOWTO_DAILY_CATEGORY_ID || "6064",
+  6064
+);
+const HOWTO_DAILY_TARGET = parsePositiveInt(process.env.HOWTO_DAILY_TARGET || "2", 2);
+const HOWTO_DAILY_POSTS_PER_RUN = parsePositiveInt(
+  process.env.HOWTO_DAILY_POSTS_PER_RUN || "1",
+  1
+);
+const HOWTO_DAILY_TIMEZONE = process.env.HOWTO_DAILY_TIMEZONE || NEWS_TIMEZONE;
+const HOWTO_TOPIC_HINT = (process.env.HOWTO_TOPIC_HINT || "").toString().trim();
+const HOWTO_DAILY_SLOTS = parseHowToSlots(
+  process.env.HOWTO_DAILY_SLOTS || "10:15,18:15"
+);
+const HOWTO_SLOT_GRACE_MINUTES = parsePositiveInt(
+  process.env.HOWTO_SLOT_GRACE_MINUTES || "20",
+  20
+);
+const HOWTO_SLOT_STRICT = process.env.HOWTO_SLOT_STRICT !== "false";
 
 const BREAKING_KEYWORDS = [
   "breaking",
@@ -337,9 +524,19 @@ const LOW_EDITORIAL_VALUE_PATTERNS = [
   /\brezultate loto\b/i,
 ];
 
+const TABLOID_TITLE_PHRASES = [
+  "soc total",
+  "bomba",
+  "incredibil",
+  "de necrezut",
+  "nu o sa iti vina sa crezi",
+  "halucinant",
+  "uluitor",
+  "senzational",
+  "wow",
+];
+
 const BLOCK_MEDIA_OUTLET_PROMO = process.env.BLOCK_MEDIA_OUTLET_PROMO !== "false";
-const BLOCK_ENIGMATIC_TITLES = process.env.BLOCK_ENIGMATIC_TITLES !== "false";
-const BLOCK_SUPERLATIVE_TITLES = process.env.BLOCK_SUPERLATIVE_TITLES !== "false";
 const CONTEXT_WORD_MAX_OCCURRENCES = parseNonNegativeInt(
   process.env.CONTEXT_WORD_MAX_OCCURRENCES || "2",
   2
@@ -476,6 +673,19 @@ function localTimeLabel(date, timeZone) {
   }
 }
 
+function minutesOfDay(parts) {
+  const hour = Number(parts?.hour || 0);
+  const minute = Number(parts?.minute || 0);
+  return hour * 60 + minute;
+}
+
+function hhmmFromMinutes(totalMinutes) {
+  const safe = Math.max(0, Math.min(23 * 60 + 59, Math.floor(totalMinutes)));
+  const hour = Math.floor(safe / 60);
+  const minute = safe % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 function isWithinPublishWindow(date = new Date()) {
   if (!PUBLISH_WINDOW_ENABLED) return true;
 
@@ -545,6 +755,7 @@ function keywordFromText(text, maxWords = 4) {
 
 function categoryNameById(categoryId) {
   if (categoryId === 7) return "ultimele_stiri";
+  if (categoryId === 6064) return "cum_sa";
   return categoryById.get(categoryId)?.name || `cat_${categoryId || "none"}`;
 }
 
@@ -785,6 +996,54 @@ function resolveCategoryId(item, article) {
     }
   }
 
+  if (fallbackCategoryId === 4063 && bestId === 821) {
+    const decisiveMatches = decisiveCategoryMatches(item, SPORT_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_social_to_sport",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 821 && bestId === 4063) {
+    const decisiveMatches = decisiveCategoryMatches(item, SOCIAL_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_sport_to_social",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4063 && bestId === 4780) {
+    const decisiveMatches = decisiveCategoryMatches(item, AUTO_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_social_to_auto",
+      };
+    }
+  }
+
+  if (fallbackCategoryId === 4780 && bestId === 4063) {
+    const decisiveMatches = decisiveCategoryMatches(item, SOCIAL_DECISIVE_TERMS);
+    if (decisiveMatches < 2) {
+      return {
+        categoryId: fallbackCategoryId,
+        changed: false,
+        scores,
+        reason: "guard_auto_to_social",
+      };
+    }
+  }
+
   return {
     categoryId: bestId,
     changed: true,
@@ -815,6 +1074,36 @@ function roleMismatchSummary(item, article, sourceClaims) {
   return findRoleMismatches(sourceClaims, generatedText);
 }
 
+async function withResolvedSourceItem(item) {
+  if (!item) return item;
+
+  const fallbackLink = `${item.link || ""}`.trim();
+  let resolvedLink = fallbackLink;
+  try {
+    resolvedLink = await resolveCanonicalSourceUrl(fallbackLink);
+  } catch {
+    resolvedLink = fallbackLink;
+  }
+
+  const sourceName = resolveSourceName(item, resolvedLink);
+  const nextLink = resolvedLink || fallbackLink;
+  const nextSource = sourceName || item.source || "Sursa";
+
+  if (nextLink && fallbackLink && nextLink !== fallbackLink) {
+    console.log(`Resolved source URL: ${fallbackLink} -> ${nextLink}`);
+  }
+
+  if (nextLink === fallbackLink && nextSource === (item.source || "")) {
+    return item;
+  }
+
+  return {
+    ...item,
+    link: nextLink,
+    source: nextSource,
+  };
+}
+
 function containsNormalized(haystack, needle) {
   const left = normalizeText(haystack || "");
   const right = normalizeText(needle || "");
@@ -842,6 +1131,35 @@ function escapeHtmlText(text) {
     .replace(/'/g, "&#39;");
 }
 
+function escapeHtmlAttr(text) {
+  return escapeHtmlText(text).replace(/`/g, "&#96;");
+}
+
+function normalizedUrl(value) {
+  const raw = `${value || ""}`.trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) return raw;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function linkLabelFromUrl(value) {
+  const safe = normalizedUrl(value);
+  if (!safe) return "";
+  try {
+    const url = new URL(safe);
+    const path = (url.pathname || "").replace(/\/+$/, "");
+    return `${url.hostname}${path}` || url.hostname;
+  } catch {
+    return safe;
+  }
+}
+
 function ensureH2WithKeyword(article) {
   if (!article?.content_html || hasH2Heading(article.content_html)) return;
   const headingText = cleanTitle(
@@ -861,9 +1179,149 @@ function ensureH2WithKeyword(article) {
     article.content_html.slice(insertAt);
 }
 
+function headingSlugBase(text, fallback = "sectiune") {
+  const normalized = normalizeText(stripHtml(text || ""));
+  const slug = normalized
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return slug || fallback;
+}
+
+function uniqueHeadingId(base, usedIds) {
+  let id = base;
+  let i = 2;
+  while (usedIds.has(id)) {
+    id = `${base}-${i}`;
+    i += 1;
+  }
+  usedIds.add(id);
+  return id;
+}
+
+function hasTableOfContentsBlock(html) {
+  return /data-article-toc="true"/i.test(html || "");
+}
+
+function applyTableOfContents(article) {
+  if (!TABLE_OF_CONTENTS_ENABLED || !article?.content_html) return;
+  if (hasTableOfContentsBlock(article.content_html)) return;
+
+  const usedIds = new Set();
+  const headings = [];
+  let headingIndex = 0;
+
+  const updatedHtml = article.content_html.replace(
+    /<h2\b([^>]*)>([\s\S]*?)<\/h2>/gi,
+    (full, attrs = "", innerHtml = "") => {
+      const headingTextRaw = stripHtml(innerHtml).replace(/\s+/g, " ").trim();
+      if (!headingTextRaw) return full;
+
+      const idMatch = attrs.match(/\bid=["']([^"']+)["']/i);
+      let headingId = (idMatch?.[1] || "").trim();
+      const originalId = headingId;
+      if (headingId && usedIds.has(headingId)) {
+        headingId = "";
+      }
+      if (headingId) usedIds.add(headingId);
+      if (!headingId) {
+        const base = headingSlugBase(headingTextRaw, `sectiune-${headingIndex + 1}`);
+        headingId = uniqueHeadingId(base, usedIds);
+      }
+
+      headingIndex += 1;
+      const label = cleanTitle(headingTextRaw, 120) || headingTextRaw;
+      headings.push({
+        id: headingId,
+        label,
+      });
+
+      if (idMatch && headingId === originalId) return full;
+      const attrsWithoutId = attrs.replace(/\s*\bid=["'][^"']*["']/i, "");
+      return `<h2${attrsWithoutId} id="${escapeHtmlAttr(headingId)}">${innerHtml}</h2>`;
+    }
+  );
+
+  if (headings.length < TABLE_OF_CONTENTS_MIN_HEADINGS) {
+    article.content_html = updatedHtml;
+    return;
+  }
+
+  const tocItems = headings
+    .slice(0, TABLE_OF_CONTENTS_MAX_ITEMS)
+    .map(
+      heading =>
+        `<li><a href="#${escapeHtmlAttr(heading.id)}">${escapeHtmlText(heading.label)}</a></li>`
+    )
+    .join("\n");
+
+  if (!tocItems) {
+    article.content_html = updatedHtml;
+    return;
+  }
+
+  const tocTitle = TABLE_OF_CONTENTS_TITLE || "Cuprins";
+  const tocHtml = `<nav data-article-toc="true" aria-label="Cuprins articol">
+<p><strong>${escapeHtmlText(tocTitle)}</strong></p>
+<ul>
+${tocItems}
+</ul>
+</nav>`;
+
+  const closeP = updatedHtml.match(/<\/p>/i);
+  if (!closeP?.index && closeP?.index !== 0) {
+    article.content_html = `${tocHtml}\n${updatedHtml}`;
+    return;
+  }
+
+  const insertAt = closeP.index + closeP[0].length;
+  article.content_html =
+    `${updatedHtml.slice(0, insertAt)}\n${tocHtml}\n` + updatedHtml.slice(insertAt);
+}
+
 function isLowEditorialValueTitle(title) {
   const normalized = normalizeText(title || "");
   return LOW_EDITORIAL_VALUE_PATTERNS.some(pattern => pattern.test(normalized));
+}
+
+function hasTabloidTitleSignals(title) {
+  const value = `${title || ""}`.trim();
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+
+  if (TABLOID_TITLE_PHRASES.some(phrase => normalized.includes(normalizeText(phrase)))) {
+    return true;
+  }
+  if (/[!?]{2,}/.test(value)) return true;
+  if (/!/.test(value)) return true;
+
+  const letters = value.match(/[A-Za-zĂÂÎȘȚăâîșț]/g) || [];
+  const upper = value.match(/[A-ZĂÂÎȘȚ]/g) || [];
+  if (letters.length >= 12 && upper.length / letters.length > 0.65) {
+    return true;
+  }
+  return false;
+}
+
+function hasHeadlineStyleIssues(title) {
+  const issues = [];
+  if (BLOCK_ENIGMATIC_TITLES && hasEnigmaticTitleSignals(title)) {
+    issues.push("enigmatic_title");
+  }
+  if (BLOCK_SUPERLATIVE_TITLES && hasSuperlativeTitleSignals(title)) {
+    issues.push("superlative_title");
+  }
+  return issues;
+}
+
+function hasSourceAttributionBlock(html) {
+  return /data-source-attribution="true"/i.test(html || "");
+}
+
+function hasEditorialNoteBlock(html) {
+  return /data-editorial-note="true"/i.test(html || "");
 }
 
 function containsAnyTerm(normalizedText, terms = []) {
@@ -883,7 +1341,7 @@ function isLikelyMediaOutletPromotionText(text) {
   const matchesGenericPattern = GENERIC_MEDIA_PROMO_PATTERNS.some(pattern =>
     pattern.test(normalized)
   );
-  if (!hasOutlet && !matchesGenericPattern && !hasPhrase) return false;
+  if (!hasOutlet && !hasPhrase && !matchesGenericPattern) return false;
 
   const hasPromoVerb = containsAnyTerm(normalized, MEDIA_PROMO_VERBS);
   const hasPromoTarget = containsAnyTerm(normalized, MEDIA_PROMO_TARGET_TERMS);
@@ -918,42 +1376,88 @@ function isLikelyMediaOutletPromotion(item) {
   return isLikelyMediaOutletPromotionText(combined);
 }
 
-function hasHeadlineStyleIssues(title) {
-  const issues = [];
-  if (BLOCK_ENIGMATIC_TITLES && hasEnigmaticTitleSignals(title)) {
-    issues.push("enigmatic_title");
-  }
-  if (BLOCK_SUPERLATIVE_TITLES && hasSuperlativeTitleSignals(title)) {
-    issues.push("superlative_title");
-  }
-  return issues;
-}
+function appendSourceAttribution(article, item) {
+  if (!SOURCE_ATTRIBUTION_ENABLED || !article?.content_html) return;
+  if (hasSourceAttributionBlock(article.content_html)) return;
 
-function reduceContextPhraseRepetition(html, maxOccurrences = 1) {
-  if (!html) return "";
-  const limit = Math.max(0, maxOccurrences);
-  let seen = 0;
-  const replacements = [
-    "in acest cadru",
-    "in aceasta situatie",
-    "potrivit datelor disponibile",
+  const sourceName = cleanTitle(item?.source || "Sursa", 140);
+  const sourceLinkRaw = `${item?.link || ""}`.trim();
+  const sourceLink = normalizedUrl(item?.link || "");
+  if (SOURCE_ATTRIBUTION_REQUIRE_LINK && !sourceLink && !sourceLinkRaw) return;
+
+  const sourceDateText = item?.publishedAt
+    ? localTimeLabel(new Date(item.publishedAt), NEWS_TIMEZONE)
+    : "";
+  const sourceLabel = sourceLink
+    ? `<a href="${escapeHtmlAttr(
+      sourceLink
+    )}" rel="nofollow noopener noreferrer" target="_blank">${escapeHtmlText(
+      linkLabelFromUrl(sourceLink)
+    )}</a>`
+    : escapeHtmlText(sourceLinkRaw);
+
+  const lines = [
+    `<p><strong>Sursa:</strong> ${escapeHtmlText(sourceName)}${sourceLabel ? ` - ${sourceLabel}` : ""}</p>`,
   ];
-  return html.replace(/\b(in|în)\s+contextul\b/gi, match => {
-    seen += 1;
-    if (seen <= limit) return match;
-    const replacement = replacements[(seen - limit - 1) % replacements.length];
-    if (/^[IÎ]/.test(match)) {
-      return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-    }
-    return replacement;
-  });
+  if (sourceDateText) {
+    lines.push(
+      `<p><strong>Data sursei:</strong> ${escapeHtmlText(sourceDateText)} (${escapeHtmlText(
+        NEWS_TIMEZONE
+      )})</p>`
+    );
+  }
+
+  article.content_html = `${article.content_html}
+<aside data-source-attribution="true">
+${lines.join("\n")}
+</aside>`;
 }
 
-function countContextWordOccurrences(html) {
-  const normalized = normalizeText(stripHtml(html || ""));
-  if (!normalized) return 0;
-  const matches = normalized.match(/\bcontext(?:ul|ului)?\b/g);
-  return matches ? matches.length : 0;
+function appendEditorialNote(article) {
+  if (!EDITORIAL_NOTE_ENABLED || !article?.content_html) return;
+  if (hasEditorialNoteBlock(article.content_html)) return;
+
+  const authorName = EDITORIAL_AUTHOR_NAME || "Gabriel Andrei";
+  const authorProfileUrl = normalizedUrl(EDITORIAL_AUTHOR_PROFILE_URL);
+  const policyUrl = normalizedUrl(EDITORIAL_POLICY_URL);
+  const replyUrl = normalizedUrl(RIGHT_OF_REPLY_URL);
+  const correctionEmail = CORRECTIONS_EMAIL.includes("@") ? CORRECTIONS_EMAIL : "";
+
+  const authorLine = authorProfileUrl
+    ? `<p><strong>Autor:</strong> <a href="${escapeHtmlAttr(
+      authorProfileUrl
+    )}" rel="noopener">${escapeHtmlText(authorName)}</a></p>`
+    : `<p><strong>Autor:</strong> ${escapeHtmlText(authorName)}</p>`;
+
+  const references = [];
+  if (policyUrl) {
+    references.push(
+      `<a href="${escapeHtmlAttr(policyUrl)}" rel="noopener">Politica editoriala</a>`
+    );
+  }
+  if (replyUrl) {
+    references.push(
+      `<a href="${escapeHtmlAttr(replyUrl)}" rel="noopener">Drept la replica</a>`
+    );
+  }
+  if (correctionEmail) {
+    references.push(
+      `Corecturi: <a href="mailto:${escapeHtmlAttr(correctionEmail)}">${escapeHtmlText(
+        correctionEmail
+      )}</a>`
+    );
+  }
+
+  const referencesLine =
+    references.length > 0
+      ? `<p>${references.join(" · ")}</p>`
+      : "<p>Pentru corecturi, redactia actualizeaza articolul imediat ce apar date verificabile.</p>";
+
+  article.content_html = `${article.content_html}
+<section data-editorial-note="true">
+${authorLine}
+${referencesLine}
+</section>`;
 }
 
 function buildMetaDescription(article) {
@@ -985,9 +1489,12 @@ function buildMetaDescription(article) {
   return candidate;
 }
 
-function qualityGateIssues(article) {
+function qualityGateIssues(article, context = {}) {
   const issues = [];
   if (!isStrongTitle(article?.title || "")) issues.push("weak_title");
+  if (BLOCK_TABLOID_TITLES && hasTabloidTitleSignals(article?.title || "")) {
+    issues.push("tabloid_title");
+  }
   issues.push(...hasHeadlineStyleIssues(article?.title || ""));
   if (!hasH2Heading(article?.content_html || "")) issues.push("missing_h2");
   const lead = firstParagraphText(article?.content_html || "");
@@ -1010,19 +1517,20 @@ function qualityGateIssues(article) {
   ) {
     issues.push("missing_internal_links");
   }
-  if (
-    BLOCK_MEDIA_OUTLET_PROMO &&
-    isLikelyMediaOutletPromotionText(
-      `${article?.title || ""} ${stripHtml(article?.content_html || "")}`
-    )
-  ) {
-    issues.push("media_outlet_promo");
+  if (SOURCE_ATTRIBUTION_ENABLED && context?.expectsSourceAttribution) {
+    if (!hasSourceAttributionBlock(article?.content_html || "")) {
+      issues.push("missing_source_attribution");
+    }
+  }
+  if (EDITORIAL_NOTE_ENABLED && !hasEditorialNoteBlock(article?.content_html || "")) {
+    issues.push("missing_editorial_note");
   }
   if (
-    CONTEXT_WORD_MAX_OCCURRENCES >= 0 &&
-    countContextWordOccurrences(article?.content_html || "") > CONTEXT_WORD_MAX_OCCURRENCES
+    TABLE_OF_CONTENTS_ENABLED &&
+    TABLE_OF_CONTENTS_REQUIRED &&
+    !hasTableOfContentsBlock(article?.content_html || "")
   ) {
-    issues.push("context_word_overused");
+    issues.push("missing_toc");
   }
   return issues;
 }
@@ -1043,13 +1551,16 @@ function countInternalLinks(html) {
   if (matches.length === 0) return 0;
 
   const internalHost = wpBaseHost();
-  if (!internalHost) return matches.length;
-
   let count = 0;
   for (const [, hrefRaw] of matches) {
     const href = (hrefRaw || "").trim();
     if (!href) continue;
+    if (href.startsWith("#")) continue;
     if (href.startsWith("/")) {
+      count += 1;
+      continue;
+    }
+    if (!internalHost) {
       count += 1;
       continue;
     }
@@ -1067,6 +1578,7 @@ function countInternalLinks(html) {
 function isInternalHref(href, internalHost) {
   const value = (href || "").trim();
   if (!value) return false;
+  if (value.startsWith("#")) return true;
   if (value.startsWith("/")) return true;
   if (!internalHost) return true;
   try {
@@ -1295,6 +1807,7 @@ function prepareCandidates(items) {
 async function maybeUploadImage(article, sourceItem = null) {
   const hasDefaultImage = DEFAULT_FEATURED_MEDIA_ID > 0;
   const sourceUrl = `${sourceItem?.link || ""}`.trim();
+  const unresolvedGoogleSource = sourceUrl ? isGoogleNewsArticleUrl(sourceUrl) : false;
   const sourceCandidates = Array.isArray(sourceItem?.imageCandidates)
     ? sourceItem.imageCandidates
     : [];
@@ -1316,7 +1829,10 @@ async function maybeUploadImage(article, sourceItem = null) {
   let sourceAttempted = false;
   if (SOURCE_FEATURED_IMAGE_ENABLED) {
     try {
-      if (sourceUrl || sourceCandidates.length > 0) {
+      if (unresolvedGoogleSource && IMAGE_DEBUG) {
+        console.log("Source URL still Google News. Skipping source scrape to avoid Google logo.");
+      }
+      if ((sourceUrl || sourceCandidates.length > 0) && !unresolvedGoogleSource) {
         sourceAttempted = true;
         const sourceImage = await downloadImageFromSource(sourceUrl, sourceCandidates);
         if (sourceImage?.filePath) {
@@ -1442,7 +1958,7 @@ async function tryPublishArticle(
     return false;
   }
 
-  const stableSlug = buildStablePostSlug(article, sourceUrl);
+  const stableSlug = buildStablePostSlug(article, sourceUrl, sourceTitle);
 
   if (!article.content_html || !hasMinimumContent(article.content_html)) {
     console.log("Content too short or missing. Skipping.");
@@ -1477,8 +1993,8 @@ async function tryPublishArticle(
 
   try {
     await publishPostWithRetry(article, categoryId, imageId, {
-      sourceTitle,
       sourceUrl,
+      sourceTitle,
       slug: stableSlug,
     });
   } catch (err) {
@@ -1486,69 +2002,61 @@ async function tryPublishArticle(
     return false;
   }
 
-  saveTopic({ title: article.title, sourceTitle, url: sourceUrl });
+  saveTopic({ title: article.title, url: sourceUrl });
   console.log("Published:", article.title);
   return true;
 }
 
 async function publishFromRssItem(item) {
-  if (isDuplicate({ title: item.title, sourceTitle: item.title, url: item.link })) {
-    console.log("Duplicate source item. Skipping:", item.title);
+  const sourceItem = await withResolvedSourceItem(item);
+
+  if (isDuplicate({ title: sourceItem.title, url: sourceItem.link })) {
+    console.log("Duplicate source item. Skipping:", sourceItem.title);
     return false;
   }
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
-    (isLikelyMediaOutletPromotion(item) ||
-      isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
+    (isLikelyMediaOutletPromotion(sourceItem) ||
+      isHardBlockedMediaOutletPromoText(
+        `${sourceItem?.title || ""} ${sourceItem?.content || ""}`
+      ))
   ) {
-    console.log("Rejected media-outlet promo item. Skipping:", item.title);
+    console.log("Rejected media-outlet promo item. Skipping:", sourceItem.title);
     return false;
   }
 
-  const raw = [item.title, item.content].filter(Boolean).join("\n\n");
+  const raw = [sourceItem.title, sourceItem.content].filter(Boolean).join("\n\n");
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
-    ? buildSourceRoleClaims(item)
+    ? buildSourceRoleClaims(sourceItem)
     : new Map();
   const roleConstraints = buildRoleConstraintsFromClaims(sourceRoleClaims);
 
-  let article = await rewriteNews(raw, item.title, {
-    publishedAt: item.publishedAt,
-    source: item.source,
-    link: item.link,
+  let article = await rewriteNews(raw, sourceItem.title, {
+    publishedAt: sourceItem.publishedAt,
+    source: sourceItem.source,
+    link: sourceItem.link,
     roleConstraints,
   });
 
   if (!article) return false;
 
-  if (countContextWordOccurrences(article.content_html) > CONTEXT_WORD_MAX_OCCURRENCES) {
-    console.log("Style retry: reducing repetitive use of 'context'.");
-    article = await rewriteNews(raw, item.title, {
-      publishedAt: item.publishedAt,
-      source: item.source,
-      link: item.link,
-      roleConstraints,
-      strictStyleMode: true,
-    });
-    if (!article) return false;
-  }
-
   if (ROLE_FACT_CHECK_ENABLED && sourceRoleClaims.size > 0) {
-    let mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+    let mismatches = roleMismatchSummary(sourceItem, article, sourceRoleClaims);
     if (mismatches.length > 0) {
       console.log(
         "Role mismatch detected, retrying strict factual mode:",
         formatRoleMismatchSummary(mismatches)
       );
-      article = await rewriteNews(raw, item.title, {
-        publishedAt: item.publishedAt,
-        source: item.source,
-        link: item.link,
+      article = await rewriteNews(raw, sourceItem.title, {
+        publishedAt: sourceItem.publishedAt,
+        source: sourceItem.source,
+        link: sourceItem.link,
         roleConstraints,
         strictRoleMode: true,
       });
       if (!article) return false;
 
-      mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
+      mismatches = roleMismatchSummary(sourceItem, article, sourceRoleClaims);
       if (mismatches.length > 0) {
         console.log(
           "Role mismatch persists. Skipping article:",
@@ -1560,7 +2068,7 @@ async function publishFromRssItem(item) {
   }
 
   article.content_html = sanitizeContent(article.content_html);
-  ensureSeoFields(article, item.title);
+  ensureSeoFields(article, sourceItem.title);
 
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
@@ -1576,7 +2084,7 @@ async function publishFromRssItem(item) {
   }
 
   if (!isStrongTitle(article.title)) {
-    const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
+    const fallbackTitle = cleanTitle(sourceItem.title, TITLE_MAX_CHARS);
     if (!isStrongTitle(fallbackTitle) || hasHeadlineStyleIssues(fallbackTitle).length > 0) {
       console.log("Title quality too low. Skipping.");
       return false;
@@ -1590,7 +2098,7 @@ async function publishFromRssItem(item) {
 
   const headlineIssues = hasHeadlineStyleIssues(article.title);
   if (headlineIssues.length > 0) {
-    const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
+    const fallbackTitle = cleanTitle(sourceItem.title, TITLE_MAX_CHARS);
     if (isStrongTitle(fallbackTitle) && hasHeadlineStyleIssues(fallbackTitle).length === 0) {
       article.title = fallbackTitle;
       article.seo_title = cleanTitle(article.seo_title || fallbackTitle, SEO_TITLE_MAX_CHARS);
@@ -1605,14 +2113,14 @@ async function publishFromRssItem(item) {
     return false;
   }
 
-  const categoryDecision = resolveCategoryId(item, article);
+  const categoryDecision = resolveCategoryId(sourceItem, article);
   const targetCategoryId = categoryDecision.categoryId;
   if (categoryDecision.changed) {
     const scoreText = categories
       .map(category => `${category.name}:${categoryDecision.scores[category.id] || 0}`)
       .join(", ");
     console.log(
-      `Category override: ${categoryNameById(item.categoryId)} -> ${categoryNameById(
+      `Category override: ${categoryNameById(sourceItem.categoryId)} -> ${categoryNameById(
         targetCategoryId
       )} [${categoryDecision.reason}] (${scoreText})`
     );
@@ -1627,20 +2135,27 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
-  article.content_html = reduceContextPhraseRepetition(
-    article.content_html,
-    CONTEXT_WORD_MAX_OCCURRENCES
-  );
+  applyTableOfContents(article);
+  appendSourceAttribution(article, sourceItem);
+  appendEditorialNote(article);
 
   if (STRICT_QUALITY_GATE) {
-    const issues = qualityGateIssues(article);
+    const issues = qualityGateIssues(article, {
+      expectsSourceAttribution: Boolean(sourceItem?.link),
+    });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
       return false;
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
+  return tryPublishArticle(
+    article,
+    targetCategoryId,
+    sourceItem.link,
+    sourceItem.title,
+    sourceItem
+  );
 }
 
 async function publishFallbackArticle() {
@@ -1695,13 +2210,13 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
-    article.content_html = reduceContextPhraseRepetition(
-      article.content_html,
-      CONTEXT_WORD_MAX_OCCURRENCES
-    );
+    applyTableOfContents(article);
+    appendEditorialNote(article);
 
     if (STRICT_QUALITY_GATE) {
-      const issues = qualityGateIssues(article);
+      const issues = qualityGateIssues(article, {
+        expectsSourceAttribution: false,
+      });
       if (issues.length > 0) {
         console.log("Fallback quality gate failed:", issues.join(", "));
         continue;
@@ -1713,6 +2228,121 @@ async function publishFallbackArticle() {
   }
 
   return false;
+}
+
+async function maybePublishHowToDaily() {
+  if (!HOWTO_DAILY_ENABLED) return 0;
+  if (HOWTO_DAILY_CATEGORY_ID <= 0 || HOWTO_DAILY_TARGET <= 0) return 0;
+
+  let todayCount = 0;
+  try {
+    todayCount = await countPostsPublishedTodayByCategory(HOWTO_DAILY_CATEGORY_ID, {
+      timeZone: HOWTO_DAILY_TIMEZONE,
+    });
+  } catch (err) {
+    console.warn("HowTo count failed:", err.message);
+    return 0;
+  }
+
+  if (todayCount >= HOWTO_DAILY_TARGET) {
+    console.log(
+      `HowTo quota reached: ${todayCount}/${HOWTO_DAILY_TARGET} for ${HOWTO_DAILY_TIMEZONE}`
+    );
+    return 0;
+  }
+
+  const slots = HOWTO_DAILY_SLOTS.length > 0
+    ? HOWTO_DAILY_SLOTS
+    : parseHowToSlots("10:15,18:15");
+  const now = new Date();
+  const localNow = localTimeParts(now, HOWTO_DAILY_TIMEZONE);
+  const nowMinuteOfDay = minutesOfDay(localNow);
+
+  const openedSlotsCount = slots.filter(slotMinute => nowMinuteOfDay >= slotMinute).length;
+  if (openedSlotsCount === 0) {
+    console.log(
+      `HowTo waiting first slot (${slots.map(hhmmFromMinutes).join(", ")}) in ${HOWTO_DAILY_TIMEZONE}`
+    );
+    return 0;
+  }
+
+  const activeSlot = slots.find(slotMinute => {
+    const lower = slotMinute;
+    const upper = slotMinute + HOWTO_SLOT_GRACE_MINUTES;
+    return nowMinuteOfDay >= lower && nowMinuteOfDay <= upper;
+  });
+
+  if (HOWTO_SLOT_STRICT && !Number.isFinite(activeSlot)) {
+    console.log(
+      `HowTo slot closed now (${hhmmFromMinutes(nowMinuteOfDay)} ${HOWTO_DAILY_TIMEZONE}); slots: ${slots
+        .map(hhmmFromMinutes)
+        .join(", ")}`
+    );
+    return 0;
+  }
+
+  const allowedByNow = Math.min(HOWTO_DAILY_TARGET, openedSlotsCount);
+  const allowedRemaining = allowedByNow - todayCount;
+  if (allowedRemaining <= 0) {
+    console.log(
+      `HowTo already at allowed slot quota: ${todayCount}/${allowedByNow} now (${HOWTO_DAILY_TIMEZONE})`
+    );
+    return 0;
+  }
+
+  const maxThisRun = Math.max(1, HOWTO_DAILY_POSTS_PER_RUN);
+  const remaining = Math.min(HOWTO_DAILY_TARGET - todayCount, allowedRemaining);
+  const toPublish = Math.min(remaining, maxThisRun);
+  let published = 0;
+
+  for (let i = 0; i < toPublish; i += 1) {
+    const article = await generateHowToArticle(HOWTO_TOPIC_HINT);
+    if (!article) break;
+
+    article.content_html = sanitizeContent(article.content_html);
+    ensureSeoFields(article, article.title);
+
+    if (!isStrongTitle(article.title)) {
+      console.log("HowTo title quality too low. Skipping.");
+      continue;
+    }
+
+    if (!hasMinimumContent(article.content_html)) {
+      console.log("HowTo content too short. Skipping.");
+      continue;
+    }
+
+    const linkedCount = await addInternalLinks(article, HOWTO_DAILY_CATEGORY_ID);
+    if (linkedCount > 0) {
+      console.log(`HowTo internal links added: ${linkedCount}`);
+    }
+    article.content_html = removeExternalLinks(article.content_html);
+    applyTableOfContents(article);
+    appendEditorialNote(article);
+
+    if (STRICT_QUALITY_GATE) {
+      const issues = qualityGateIssues(article, {
+        expectsSourceAttribution: false,
+      });
+      if (issues.length > 0) {
+        console.log("HowTo quality gate failed:", issues.join(", "));
+        continue;
+      }
+    }
+
+    const success = await tryPublishArticle(
+      article,
+      HOWTO_DAILY_CATEGORY_ID,
+      null,
+      article.title
+    );
+    if (success) {
+      published += 1;
+      todayCount += 1;
+    }
+  }
+
+  return published;
 }
 
 async function run() {
@@ -1756,7 +2386,14 @@ async function run() {
     if (fallback) published += 1;
   }
 
-  console.log(`DONE – published ${published} article(s)`);
+  let howToPublished = 0;
+  if (HOWTO_DAILY_ENABLED) {
+    howToPublished = await maybePublishHowToDaily();
+  }
+
+  console.log(
+    `DONE – published ${published} news article(s) and ${howToPublished} how-to article(s)`
+  );
   process.exit(0);
 }
 

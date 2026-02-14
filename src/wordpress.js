@@ -30,6 +30,7 @@ const DEFAULT_WP_FEATURED_MEDIA_ID = parsePositiveInt(
   0
 );
 const SOCIAL_IMAGE_META_ENABLED = process.env.SOCIAL_IMAGE_META_ENABLED !== "false";
+const WP_TWO_STEP_PUBLISH_ENABLED = process.env.WP_TWO_STEP_PUBLISH_ENABLED !== "false";
 
 function parseCsvPositiveInts(value) {
   return uniqueStrings(
@@ -541,7 +542,7 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
   const payload = {
     title: article.title,
     content: article.content_html,
-    status: "publish",
+    status: WP_TWO_STEP_PUBLISH_ENABLED ? "draft" : "publish",
   };
 
   const authorId = parsePositiveInt(options.authorId || DEFAULT_WP_AUTHOR_ID, 0);
@@ -597,9 +598,9 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
     payload.meta = meta;
   }
 
-  const res = await axios.post(wpApi("/posts"), payload, { auth });
-  const postId = parsePositiveInt(res?.data?.id || "0", 0);
-  const currentFeaturedMedia = parsePositiveInt(res?.data?.featured_media || "0", 0);
+  const createRes = await axios.post(wpApi("/posts"), payload, { auth });
+  const postId = parsePositiveInt(createRes?.data?.id || "0", 0);
+  const currentFeaturedMedia = parsePositiveInt(createRes?.data?.featured_media || "0", 0);
   if (
     postId > 0 &&
     preferredFeaturedMediaId > 0 &&
@@ -618,5 +619,24 @@ export async function publishPost(article, categoryId, imageId, options = {}) {
       );
     }
   }
-  return res.data;
+
+  if (postId > 0 && WP_TWO_STEP_PUBLISH_ENABLED) {
+    const publishPayload = { status: "publish" };
+    if (preferredFeaturedMediaId > 0) {
+      publishPayload.featured_media = preferredFeaturedMediaId;
+    }
+    if (Object.keys(meta).length > 0) {
+      publishPayload.meta = meta;
+    }
+    try {
+      const publishRes = await axios.post(wpApi(`/posts/${postId}`), publishPayload, {
+        auth,
+      });
+      return publishRes.data;
+    } catch (err) {
+      console.warn(`PUBLISH FINALIZE WARN: could not publish post ${postId}:`, err.message);
+    }
+  }
+
+  return createRes.data;
 }
