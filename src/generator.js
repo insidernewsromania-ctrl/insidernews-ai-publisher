@@ -33,11 +33,13 @@ const ATTEMPTS = Math.min(parsePositiveInt(FALLBACK_ATTEMPTS, 3), 5);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const ENFORCE_GENERATOR_MIN_WORDS = process.env.ENFORCE_GENERATOR_MIN_WORDS === "true";
 const HOWTO_MIN_WORDS = parsePositiveInt(
   process.env.HOWTO_MIN_WORDS || process.env.MIN_WORDS || "350",
   350
 );
 const HOWTO_ATTEMPTS = Math.min(parsePositiveInt(process.env.HOWTO_ATTEMPTS || "3", 3), 5);
+const ENFORCE_HOWTO_MIN_WORDS = process.env.ENFORCE_HOWTO_MIN_WORDS === "true";
 
 function hasHeadlineStyleIssues(title) {
   return hasEnigmaticTitleSignals(title) || hasSuperlativeTitleSignals(title);
@@ -150,8 +152,8 @@ function buildPrompt(category, attempt) {
       ? `
 
 ATENȚIE:
-- Răspunsul anterior a fost prea scurt sau incomplet.
-- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.`
+- Răspunsul anterior a fost incomplet.
+- Păstrează structura clară, utilă și factuală.`
       : "";
 
   return `
@@ -196,9 +198,9 @@ Returnează STRICT JSON, fără markdown:
 }
 
 REGULI OUTPUT:
-- title: max 110 caractere.
-- seo_title: max 60 caractere.
-- meta_description: între 130 și 160 caractere.
+- title: clar, natural, fara limita rigida de caractere.
+- seo_title: concis pentru SEO, fara limita rigida de caractere.
+- meta_description: utila pentru cititor, fara limita rigida de caractere.
 - tags: 2–5 taguri, fără #.
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
@@ -206,7 +208,6 @@ REGULI OUTPUT:
 - Fără semne de exclamare în titlu.
 - Titlul trebuie să includă clar actorul principal (persoană/club/instituție), nu formulări vagi.
 - Include focus keyword natural în lead și într-un subtitlu H2.
-- Minim ${MIN_WORDS} de cuvinte.
 ${extra}
 `;
 }
@@ -225,8 +226,7 @@ function buildHowToPrompt(topicHint, attempt) {
       ? `
 
 ATENȚIE:
-- Răspunsul anterior a fost prea scurt sau incomplet.
-- Respectă strict minimum ${HOWTO_MIN_WORDS} cuvinte.
+- Răspunsul anterior a fost incomplet.
 - Menține claritatea pașilor practici și verifică utilitatea informației.`
       : "";
 
@@ -255,12 +255,11 @@ STRUCTURĂ:
 - Include o secțiune scurtă "Greșeli frecvente" și una "Întrebări rapide".
 
 SEO:
-- title max 110 caractere
-- seo_title max 60 caractere
-- meta_description între 130 și 160 caractere
+- title clar si natural (fara limita rigida de caractere)
+- seo_title concis pentru SEO (fara limita rigida de caractere)
+- meta_description utila pentru cititor (fara limita rigida de caractere)
 - 2-5 taguri relevante
 - focus keyword natural în lead și într-un H2
-- minim ${HOWTO_MIN_WORDS} cuvinte
 
 Returnează STRICT JSON, fără markdown:
 {
@@ -327,14 +326,16 @@ export async function generateArticle(category) {
         continue;
       }
 
-      const words = wordCount(article.content_html);
-      if (words < MIN_WORDS) {
-        if (attempt < ATTEMPTS) {
-          console.log(`GENERATOR RETRY: articol prea scurt (${words}/${MIN_WORDS})`);
-        } else {
-          console.log(`GENERATOR SKIP: articol prea scurt (${words}/${MIN_WORDS})`);
+      if (ENFORCE_GENERATOR_MIN_WORDS) {
+        const words = wordCount(article.content_html);
+        if (words < MIN_WORDS) {
+          if (attempt < ATTEMPTS) {
+            console.log(`GENERATOR RETRY: articol prea scurt (${words}/${MIN_WORDS})`);
+          } else {
+            console.log(`GENERATOR SKIP: articol prea scurt (${words}/${MIN_WORDS})`);
+          }
+          continue;
         }
-        continue;
       }
 
       return article;
@@ -407,14 +408,16 @@ export async function generateHowToArticle(topicHint = "") {
         }
       }
 
-      const words = wordCount(article.content_html);
-      if (words < HOWTO_MIN_WORDS) {
-        if (attempt < HOWTO_ATTEMPTS) {
-          console.log(`HOWTO RETRY: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
-        } else {
-          console.log(`HOWTO SKIP: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
+      if (ENFORCE_HOWTO_MIN_WORDS) {
+        const words = wordCount(article.content_html);
+        if (words < HOWTO_MIN_WORDS) {
+          if (attempt < HOWTO_ATTEMPTS) {
+            console.log(`HOWTO RETRY: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
+          } else {
+            console.log(`HOWTO SKIP: articol prea scurt (${words}/${HOWTO_MIN_WORDS})`);
+          }
+          continue;
         }
-        continue;
       }
 
       return article;

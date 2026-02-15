@@ -15,7 +15,6 @@ REGULI OBLIGATORII:
 - Fără citarea sursei sau a altor publicații.
 - Fără formulări de tip „potrivit surselor".
 - Nu transforma articolul intr-o promovare pentru alte publicatii, pagini, canale sau emisiuni media.
-- Minim {{MIN_WORDS}} de cuvinte.
 - Fără secțiune intitulată „Concluzie”.
 - Ton profesionist, informativ, fără senzaționalism.
 - Evită expresii tabloid (ex.: „șoc”, „bombă”, „halucinant”, „de necrezut”).
@@ -41,8 +40,8 @@ STRUCTURĂ:
 - Final deschis, informativ (fără concluzie explicită).
 
 SEO:
-- Titlu SEO max 60 caractere (derivat din H1).
-- Meta descriere între 130 și 160 caractere.
+- Titlu SEO concis (recomandat in jur de 60 de caractere, fara limita rigida).
+- Meta descriere clara si utila (recomandat 130-160 de caractere, fara limita rigida).
 - 2–5 taguri relevante.
 - Un focus keyword relevant pentru subiect.
 - Include focus keyword natural în lead și într-un subtitlu H2.
@@ -63,9 +62,9 @@ Returnează STRICT JSON (fără markdown):
 }
 
 REGULI OUTPUT:
-- title: max 110 caractere.
-- seo_title: max 60 caractere.
-- meta_description: între 130 și 160 caractere.
+- title: clar, natural, fara limita rigida de caractere.
+- seo_title: concis pentru SEO, fara limita rigida de caractere.
+- meta_description: utila pentru cititor, fara limita rigida de caractere.
 - tags: 2–5 taguri, fără #.
 - content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
 

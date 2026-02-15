@@ -23,6 +23,7 @@ const AI_MIN_WORDS = Number(
 );
 const AI_REWRITE_ATTEMPTS = Number(process.env.AI_REWRITE_ATTEMPTS || "2");
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const ENFORCE_AI_MIN_WORDS = process.env.ENFORCE_AI_MIN_WORDS === "true";
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number(value);
@@ -123,8 +124,7 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
 
   if (extraRules.length === 0) {
     extraRules.push(`ATENȚIE:
-- Răspunsul anterior a fost prea scurt.
-- Respectă strict minimum ${MIN_WORDS} cuvinte în content_html.
+- Răspunsul anterior a fost incomplet.
 - Păstrează faptele din textul sursă, fără invenții.`);
   }
 
@@ -259,18 +259,16 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
         }
       }
 
-      const words = wordCount(article.content_html);
-      if (words < MIN_WORDS) {
-        if (attempt < REWRITE_ATTEMPTS) {
-          console.log(
-            `AI RETRY: articol prea scurt (${words}/${MIN_WORDS})`
-          );
-        } else {
-          console.log(
-            `AI SKIP: articol prea scurt (${words}/${MIN_WORDS})`
-          );
+      if (ENFORCE_AI_MIN_WORDS) {
+        const words = wordCount(article.content_html);
+        if (words < MIN_WORDS) {
+          if (attempt < REWRITE_ATTEMPTS) {
+            console.log(`AI RETRY: articol prea scurt (${words}/${MIN_WORDS})`);
+          } else {
+            console.log(`AI SKIP: articol prea scurt (${words}/${MIN_WORDS})`);
+          }
+          continue;
         }
-        continue;
       }
 
       return article;

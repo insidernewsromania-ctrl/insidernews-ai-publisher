@@ -351,7 +351,8 @@ const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
 const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "20");
 const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
 const MIN_CONTENT_CHARS = Number(process.env.MIN_CONTENT_CHARS || "120");
-const MIN_WORDS = Number(process.env.MIN_WORDS || "350");
+const PUBLISH_MIN_WORDS = Number(process.env.PUBLISH_MIN_WORDS || process.env.MIN_WORDS || "350");
+const ENFORCE_PUBLISH_MIN_WORDS = process.env.ENFORCE_PUBLISH_MIN_WORDS === "true";
 const STRICT_RECENT = process.env.STRICT_RECENT !== "false";
 const SAME_DAY_ONLY = process.env.SAME_DAY_ONLY !== "false";
 const NEWS_TIMEZONE = process.env.NEWS_TIMEZONE || "Europe/Bucharest";
@@ -383,6 +384,7 @@ const META_DESCRIPTION_MAX_CHARS = parsePositiveInt(
 );
 const MIN_LEAD_WORDS = parsePositiveInt(process.env.MIN_LEAD_WORDS || "18", 18);
 const STRICT_QUALITY_GATE = process.env.STRICT_QUALITY_GATE !== "false";
+const ENFORCE_LENGTH_QUALITY = process.env.ENFORCE_LENGTH_QUALITY === "true";
 const PUBLISH_WINDOW_ENABLED = process.env.PUBLISH_WINDOW_ENABLED !== "false";
 const PUBLISH_WINDOW_START_HOUR = parsePositiveInt(
   process.env.PUBLISH_WINDOW_START_HOUR || "8",
@@ -741,7 +743,10 @@ function sanitizeContent(html) {
 }
 
 function hasMinimumContent(html) {
-  return wordCount(html) >= MIN_WORDS;
+  const plain = stripHtml(html || "").replace(/\s+/g, " ").trim();
+  if (!plain) return false;
+  if (!ENFORCE_PUBLISH_MIN_WORDS) return true;
+  return wordCount(plain) >= Math.max(1, Number(PUBLISH_MIN_WORDS) || 1);
 }
 
 function keywordFromText(text, maxWords = 4) {
@@ -1497,14 +1502,16 @@ function qualityGateIssues(article, context = {}) {
   }
   issues.push(...hasHeadlineStyleIssues(article?.title || ""));
   if (!hasH2Heading(article?.content_html || "")) issues.push("missing_h2");
-  const lead = firstParagraphText(article?.content_html || "");
-  if (wordCount(lead) < MIN_LEAD_WORDS) issues.push("lead_too_short");
-  const metaLength = (article?.meta_description || "").trim().length;
-  if (
-    metaLength < META_DESCRIPTION_MIN_CHARS ||
-    metaLength > META_DESCRIPTION_MAX_CHARS
-  ) {
-    issues.push("meta_description_length");
+  if (ENFORCE_LENGTH_QUALITY) {
+    const lead = firstParagraphText(article?.content_html || "");
+    if (wordCount(lead) < MIN_LEAD_WORDS) issues.push("lead_too_short");
+    const metaLength = (article?.meta_description || "").trim().length;
+    if (
+      metaLength < META_DESCRIPTION_MIN_CHARS ||
+      metaLength > META_DESCRIPTION_MAX_CHARS
+    ) {
+      issues.push("meta_description_length");
+    }
   }
   if (article?.focus_keyword) {
     if (!containsNormalized(article.title, article.focus_keyword)) {
