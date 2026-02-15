@@ -480,6 +480,17 @@ const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
   1
 );
 const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
+const PREMIUM_EDITORIAL_PROFILE = process.env.PREMIUM_EDITORIAL_PROFILE !== "false";
+const PREMIUM_REQUIRE_KEY_FACTS = process.env.PREMIUM_REQUIRE_KEY_FACTS !== "false";
+const PREMIUM_REQUIRE_WHATS_NEXT = process.env.PREMIUM_REQUIRE_WHATS_NEXT !== "false";
+const PREMIUM_KEY_FACTS_MIN_ITEMS = parsePositiveInt(
+  process.env.PREMIUM_KEY_FACTS_MIN_ITEMS || "3",
+  3
+);
+const PREMIUM_KEY_FACTS_MAX_ITEMS = parsePositiveInt(
+  process.env.PREMIUM_KEY_FACTS_MAX_ITEMS || "5",
+  5
+);
 const HOWTO_DAILY_ENABLED = process.env.HOWTO_DAILY_ENABLED !== "false";
 const HOWTO_DAILY_CATEGORY_ID = parsePositiveInt(
   process.env.HOWTO_DAILY_CATEGORY_ID || "6064",
@@ -1209,6 +1220,162 @@ function hasTableOfContentsBlock(html) {
   return /data-article-toc="true"/i.test(html || "");
 }
 
+function paragraphTexts(html, limit = 12) {
+  const source = html || "";
+  const matches = [...source.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)];
+  const items = matches
+    .map(([, inner = ""]) => stripHtml(inner).replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return items.slice(0, Math.max(1, limit));
+}
+
+function extractSectionHtmlByH2Heading(html, headingText) {
+  const source = html || "";
+  const target = normalizeText(headingText || "");
+  if (!target) return "";
+
+  const headings = [...source.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map(match => ({
+    index: Number.isFinite(match.index) ? match.index : 0,
+    end: (Number.isFinite(match.index) ? match.index : 0) + match[0].length,
+    text: stripHtml(match[1] || ""),
+  }));
+
+  for (let i = 0; i < headings.length; i += 1) {
+    const headingNorm = normalizeText(headings[i].text);
+    if (!headingNorm.includes(target)) continue;
+    const start = headings[i].end;
+    const end = i + 1 < headings.length ? headings[i + 1].index : source.length;
+    return source.slice(start, end);
+  }
+  return "";
+}
+
+function hasH2SectionHeading(html, headingText) {
+  const target = normalizeText(headingText || "");
+  if (!target) return false;
+  const headings = [...(`${html || ""}`.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi))];
+  for (const [, inner = ""] of headings) {
+    if (normalizeText(stripHtml(inner)).includes(target)) return true;
+  }
+  return false;
+}
+
+function hasKeyFactsSection(html) {
+  return hasH2SectionHeading(html, "Ce trebuie sa stii rapid");
+}
+
+function keyFactsListItemCount(html) {
+  const sectionHtml = extractSectionHtmlByH2Heading(html, "Ce trebuie sa stii rapid");
+  if (!sectionHtml) return 0;
+  const matches = sectionHtml.match(/<li\b[^>]*>/gi);
+  return matches ? matches.length : 0;
+}
+
+function hasWhatsNextSection(html) {
+  return hasH2SectionHeading(html, "Ce urmeaza");
+}
+
+function buildKeyFactsItemsFromHtml(html) {
+  const minItems = Math.max(1, PREMIUM_KEY_FACTS_MIN_ITEMS);
+  const maxItems = Math.max(minItems, PREMIUM_KEY_FACTS_MAX_ITEMS);
+  const paragraphs = paragraphTexts(html, 10);
+  const items = [];
+  const seen = new Set();
+
+  for (const paragraph of paragraphs) {
+    const sentences = paragraph
+      .split(/(?<=[.!?])\s+/)
+      .map(sentence => sentence.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    for (let sentence of sentences) {
+      sentence = sentence
+        .replace(/^[-•\d.)\s]+/, "")
+        .replace(/[;:,.!?]+$/, "")
+        .trim();
+      if (!sentence) continue;
+      const words = normalizeText(sentence).split(" ").filter(Boolean).length;
+      if (words < 7 || sentence.length < 40) continue;
+      const dedupeKey = normalizeText(sentence)
+        .split(" ")
+        .slice(0, 12)
+        .join(" ");
+      if (!dedupeKey || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      items.push(sentence);
+      if (items.length >= maxItems) return items;
+    }
+  }
+
+  for (const paragraph of paragraphs) {
+    if (items.length >= minItems) break;
+    const fallback = truncateAtWord(paragraph, 140);
+    const dedupeKey = normalizeText(fallback)
+      .split(" ")
+      .slice(0, 12)
+      .join(" ");
+    if (!fallback || !dedupeKey || seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    items.push(fallback);
+  }
+
+  return items.slice(0, maxItems);
+}
+
+function ensureKeyFactsSection(article) {
+  if (!article?.content_html) return;
+  if (hasKeyFactsSection(article.content_html)) return;
+  const items = buildKeyFactsItemsFromHtml(article.content_html);
+  if (items.length < Math.max(1, PREMIUM_KEY_FACTS_MIN_ITEMS)) return;
+
+  const listHtml = items
+    .map(item => `<li>${escapeHtmlText(item)}</li>`)
+    .join("\n");
+  const blockHtml = `<h2>Ce trebuie să știi rapid</h2>
+<ul>
+${listHtml}
+</ul>`;
+
+  const closeP = article.content_html.match(/<\/p>/i);
+  if (!closeP?.index && closeP?.index !== 0) {
+    article.content_html = `${blockHtml}\n${article.content_html}`;
+    return;
+  }
+  const insertAt = closeP.index + closeP[0].length;
+  article.content_html =
+    `${article.content_html.slice(0, insertAt)}\n${blockHtml}\n` +
+    article.content_html.slice(insertAt);
+}
+
+function ensureWhatsNextSection(article) {
+  if (!article?.content_html) return;
+  if (hasWhatsNextSection(article.content_html)) return;
+
+  const paragraphs = paragraphTexts(article.content_html, 20);
+  const candidate = [...paragraphs]
+    .reverse()
+    .find(text => normalizeText(text).split(" ").filter(Boolean).length >= 8);
+  if (!candidate) return;
+
+  const summary = truncateAtWord(candidate, 240);
+  if (!summary) return;
+  const blockHtml = `<h2>Ce urmează</h2>
+<p>${escapeHtmlText(summary)}</p>`;
+  article.content_html = `${article.content_html}\n${blockHtml}`;
+}
+
+function applyPremiumEditorialStructure(article, options = {}) {
+  if (!PREMIUM_EDITORIAL_PROFILE || !article?.content_html) return;
+  const enableKeyFacts = options.keyFacts !== false;
+  const enableWhatsNext = options.whatsNext !== false;
+  if (PREMIUM_REQUIRE_KEY_FACTS && enableKeyFacts) {
+    ensureKeyFactsSection(article);
+  }
+  if (PREMIUM_REQUIRE_WHATS_NEXT && enableWhatsNext) {
+    ensureWhatsNextSection(article);
+  }
+}
+
 function applyTableOfContents(article) {
   if (!TABLE_OF_CONTENTS_ENABLED || !article?.content_html) return;
   if (hasTableOfContentsBlock(article.content_html)) return;
@@ -1538,6 +1705,19 @@ function qualityGateIssues(article, context = {}) {
     !hasTableOfContentsBlock(article?.content_html || "")
   ) {
     issues.push("missing_toc");
+  }
+  if (context?.requirePremiumSections && PREMIUM_EDITORIAL_PROFILE) {
+    if (PREMIUM_REQUIRE_KEY_FACTS) {
+      const keyFactsCount = keyFactsListItemCount(article?.content_html || "");
+      if (!hasKeyFactsSection(article?.content_html || "")) {
+        issues.push("missing_key_facts_section");
+      } else if (keyFactsCount < Math.max(1, PREMIUM_KEY_FACTS_MIN_ITEMS)) {
+        issues.push("key_facts_too_short");
+      }
+    }
+    if (PREMIUM_REQUIRE_WHATS_NEXT && !hasWhatsNextSection(article?.content_html || "")) {
+      issues.push("missing_whats_next_section");
+    }
   }
   return issues;
 }
@@ -2142,6 +2322,7 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
+  applyPremiumEditorialStructure(article, { keyFacts: true, whatsNext: true });
   applyTableOfContents(article);
   appendSourceAttribution(article, sourceItem);
   appendEditorialNote(article);
@@ -2149,6 +2330,7 @@ async function publishFromRssItem(item) {
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article, {
       expectsSourceAttribution: Boolean(sourceItem?.link),
+      requirePremiumSections: true,
     });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
@@ -2217,12 +2399,14 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
+    applyPremiumEditorialStructure(article, { keyFacts: true, whatsNext: true });
     applyTableOfContents(article);
     appendEditorialNote(article);
 
     if (STRICT_QUALITY_GATE) {
       const issues = qualityGateIssues(article, {
         expectsSourceAttribution: false,
+        requirePremiumSections: true,
       });
       if (issues.length > 0) {
         console.log("Fallback quality gate failed:", issues.join(", "));
