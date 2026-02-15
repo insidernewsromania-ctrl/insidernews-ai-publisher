@@ -1,8 +1,14 @@
 import { collectNews } from "./rss.js";
-import { rewriteNews } from "./ai.js";
+import {
+  extendArticleJournalistic,
+  rewriteNews,
+  rewriteTitleForDiscover,
+} from "./ai.js";
 import { generateArticle } from "./generator.js";
 import {
   buildStablePostSlug,
+  countPostsPublishedTodayByCategory,
+  getRecentPostsForDuplicateSimilarity,
   getRecentPostsForInternalLinks,
   publishPost,
   uploadImage,
@@ -219,6 +225,11 @@ function parseNonNegativeInt(value, fallback = 0) {
   return Math.floor(parsed);
 }
 
+function parsePositiveNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
 const POSTS_PER_RUN = Number(process.env.POSTS_PER_RUN || "1");
 const CANDIDATE_LIMIT = Number(process.env.CANDIDATE_LIMIT || "20");
 const RECENT_HOURS = Number(process.env.RECENT_HOURS || "24");
@@ -310,6 +321,84 @@ const CATEGORY_SECOND_BEST_MARGIN = parsePositiveInt(
 const DEFAULT_UNCERTAIN_CATEGORY_ID = parsePositiveInt(
   process.env.DEFAULT_UNCERTAIN_CATEGORY_ID || "7",
   7
+);
+const SOURCE_ATTRIBUTION_ENABLED = process.env.SOURCE_ATTRIBUTION_ENABLED !== "false";
+const SOURCE_ATTRIBUTION_REQUIRE_LINK =
+  process.env.SOURCE_ATTRIBUTION_REQUIRE_LINK !== "false";
+const EDITORIAL_NOTE_ENABLED = process.env.EDITORIAL_NOTE_ENABLED !== "false";
+const EDITORIAL_AUTHOR_NAME = (
+  process.env.EDITORIAL_AUTHOR_NAME || "Gabriel Andrei"
+)
+  .toString()
+  .trim();
+const EDITORIAL_AUTHOR_PROFILE_URL = (
+  process.env.EDITORIAL_AUTHOR_PROFILE_URL || "https://insidernews.ro/author/gabriel/"
+)
+  .toString()
+  .trim();
+const EDITORIAL_POLICY_URL = (process.env.EDITORIAL_POLICY_URL || "")
+  .toString()
+  .trim();
+const RIGHT_OF_REPLY_URL = (process.env.RIGHT_OF_REPLY_URL || "")
+  .toString()
+  .trim();
+const CORRECTIONS_EMAIL = (process.env.CORRECTIONS_EMAIL || "")
+  .toString()
+  .trim();
+const BLOCK_TABLOID_TITLES = process.env.BLOCK_TABLOID_TITLES !== "false";
+const TABLE_OF_CONTENTS_ENABLED = process.env.TABLE_OF_CONTENTS_ENABLED !== "false";
+const TABLE_OF_CONTENTS_TITLE = (process.env.TABLE_OF_CONTENTS_TITLE || "Cuprins")
+  .toString()
+  .trim();
+const TABLE_OF_CONTENTS_MAX_ITEMS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MAX_ITEMS || "8",
+  8
+);
+const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
+  process.env.TABLE_OF_CONTENTS_MIN_HEADINGS || "1",
+  1
+);
+const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
+const PREMIUM_EDITORIAL_PROFILE = process.env.PREMIUM_EDITORIAL_PROFILE !== "false";
+const PREMIUM_ADAPTIVE_SECTIONS = process.env.PREMIUM_ADAPTIVE_SECTIONS !== "false";
+const PREMIUM_REQUIRE_KEY_FACTS = process.env.PREMIUM_REQUIRE_KEY_FACTS === "true";
+const PREMIUM_REQUIRE_WHATS_NEXT = process.env.PREMIUM_REQUIRE_WHATS_NEXT === "true";
+const PREMIUM_COMPLEX_MIN_WORDS = parsePositiveInt(
+  process.env.PREMIUM_COMPLEX_MIN_WORDS || "260",
+  260
+);
+const PREMIUM_KEY_FACTS_MIN_ITEMS = parsePositiveInt(
+  process.env.PREMIUM_KEY_FACTS_MIN_ITEMS || "3",
+  3
+);
+const PREMIUM_KEY_FACTS_MAX_ITEMS = parsePositiveInt(
+  process.env.PREMIUM_KEY_FACTS_MAX_ITEMS || "5",
+  5
+);
+const ENTERPRISE_SCORE_MIN = parsePositiveInt(
+  process.env.ENTERPRISE_SCORE_MIN || "40",
+  40
+);
+const ENTERPRISE_DUPLICATE_LOOKBACK = parsePositiveInt(
+  process.env.ENTERPRISE_DUPLICATE_LOOKBACK || "200",
+  200
+);
+const ENTERPRISE_DUPLICATE_THRESHOLD = parsePositiveNumber(
+  process.env.ENTERPRISE_DUPLICATE_THRESHOLD || "0.82",
+  0.82
+);
+const ENTERPRISE_DUPLICATE_SLICE = parsePositiveInt(
+  process.env.ENTERPRISE_DUPLICATE_SLICE || "2000",
+  2000
+);
+const GPT_TEXT_LIMIT = parsePositiveInt(process.env.GPT_TEXT_LIMIT || "3500", 3500);
+const SHORT_ARTICLE_MIN_CHARS = parsePositiveInt(
+  process.env.SHORT_ARTICLE_MIN_CHARS || "1800",
+  1800
+);
+const ENTERPRISE_PUBLISH_MIN_CHARS = parsePositiveInt(
+  process.env.ENTERPRISE_PUBLISH_MIN_CHARS || "1500",
+  1500
 );
 
 const BREAKING_KEYWORDS = [
@@ -412,7 +501,71 @@ const GENERIC_MEDIA_PROMO_PATTERNS = [
   /\bpublicate?\s+de\s+[a-z0-9][a-z0-9 .-]{1,40}\b/,
 ];
 
+const ARTICLE_INSTITUTION_TERMS = [
+  "guvern",
+  "parlament",
+  "senat",
+  "camera deputatilor",
+  "minister",
+  "presedintie",
+  "primarie",
+  "consiliu local",
+  "anaf",
+  "cnas",
+  "dsp",
+  "ins",
+  "banca nationala",
+  "bcc",
+  "dna",
+  "diicot",
+  "politia romana",
+  "isj",
+  "inspectia muncii",
+];
+
+const ARTICLE_CITY_TERMS = [
+  "bucuresti",
+  "cluj",
+  "iasi",
+  "timisoara",
+  "constanta",
+  "brasov",
+  "sibiu",
+  "oradea",
+  "craiova",
+  "galati",
+  "ploiesti",
+  "pitesti",
+  "arad",
+  "baia mare",
+  "suceava",
+  "botosani",
+  "focsani",
+  "targu mures",
+];
+
+const RECENT_DATE_TERMS = [
+  "azi",
+  "astazi",
+  "ieri",
+  "in aceasta dimineata",
+  "in aceasta seara",
+  "zilele acestea",
+];
+
+const VIRAL_TERMS = [
+  "accident",
+  "guvern",
+  "lege",
+  "taxe",
+  "pret",
+  "alegeri",
+  "sanatate",
+  "vreme",
+];
+
 const internalLinkTargetsCache = new Map();
+let enterpriseDuplicateCorpus = [];
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -515,6 +668,228 @@ function scoreItem(item) {
   }
   if ((item.content || "").length > 160) score += 1;
   return score;
+}
+
+function plainTextLength(value) {
+  return stripHtml(value || "").replace(/\s+/g, " ").trim().length;
+}
+
+function normalizeDuplicateText(value) {
+  return normalizeText(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ENTERPRISE_DUPLICATE_SLICE);
+}
+
+function duplicateTokenSet(normalizedValue) {
+  const tokens = (normalizedValue || "")
+    .split(" ")
+    .map(token => token.trim())
+    .filter(token => token.length >= 2);
+  return new Set(tokens);
+}
+
+function duplicateSimilarityScore(leftValue, rightValue) {
+  const leftTokens = duplicateTokenSet(leftValue);
+  const rightTokens = duplicateTokenSet(rightValue);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+  const denominator = Math.min(leftTokens.size, rightTokens.size);
+  if (denominator <= 0) return 0;
+  return overlap / denominator;
+}
+
+function rememberEnterpriseDuplicateText(title, text) {
+  const normalizedText = normalizeDuplicateText(`${title || ""} ${text || ""}`);
+  if (!normalizedText) return;
+  if (enterpriseDuplicateCorpus.some(entry => entry.normalizedText === normalizedText)) return;
+
+  enterpriseDuplicateCorpus.unshift({
+    id: 0,
+    title: cleanTitle(title || "", 120),
+    normalizedText,
+  });
+  if (enterpriseDuplicateCorpus.length > ENTERPRISE_DUPLICATE_LOOKBACK) {
+    enterpriseDuplicateCorpus = enterpriseDuplicateCorpus.slice(0, ENTERPRISE_DUPLICATE_LOOKBACK);
+  }
+}
+
+async function refreshEnterpriseDuplicateCorpus() {
+  try {
+    const posts = await getRecentPostsForDuplicateSimilarity({
+      limit: ENTERPRISE_DUPLICATE_LOOKBACK,
+    });
+    enterpriseDuplicateCorpus = (posts || [])
+      .map(post => ({
+        id: Number(post?.id || 0),
+        title: `${post?.title || ""}`.trim(),
+        normalizedText: normalizeDuplicateText(`${post?.title || ""} ${post?.content || ""}`),
+      }))
+      .filter(entry => entry.normalizedText);
+    console.log(
+      `Enterprise duplicate corpus loaded: ${enterpriseDuplicateCorpus.length} post(s)`
+    );
+  } catch (err) {
+    enterpriseDuplicateCorpus = [];
+    console.warn("Enterprise duplicate corpus load failed:", err.message);
+  }
+}
+
+function detectEnterpriseDuplicate(text) {
+  const normalizedInput = normalizeDuplicateText(text);
+  if (!normalizedInput || enterpriseDuplicateCorpus.length === 0) {
+    return {
+      isDuplicate: false,
+      similarity: 0,
+      compared: enterpriseDuplicateCorpus.length,
+      matchedTitle: "",
+      matchedId: 0,
+    };
+  }
+
+  let bestSimilarity = 0;
+  let matchedEntry = null;
+  for (const entry of enterpriseDuplicateCorpus) {
+    const similarity = duplicateSimilarityScore(normalizedInput, entry.normalizedText);
+    if (similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      matchedEntry = entry;
+    }
+    if (similarity > ENTERPRISE_DUPLICATE_THRESHOLD) {
+      return {
+        isDuplicate: true,
+        similarity,
+        compared: enterpriseDuplicateCorpus.length,
+        matchedTitle: entry.title || "",
+        matchedId: Number(entry.id || 0),
+      };
+    }
+  }
+
+  return {
+    isDuplicate: false,
+    similarity: bestSimilarity,
+    compared: enterpriseDuplicateCorpus.length,
+    matchedTitle: matchedEntry?.title || "",
+    matchedId: Number(matchedEntry?.id || 0),
+  };
+}
+
+function parseDmyDate(day, month, year) {
+  const d = Number(day);
+  const m = Number(month);
+  const y = Number(year);
+  if (!Number.isFinite(d) || !Number.isFinite(m) || !Number.isFinite(y)) return null;
+  if (y < 2000 || y > 2100) return null;
+  if (m < 1 || m > 12) return null;
+  if (d < 1 || d > 31) return null;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function isRecentCalendarDate(date, maxDays = 14) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  const diffMs = Math.abs(now.getTime() - date.getTime());
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays <= maxDays;
+}
+
+function containsRecentDateSignal(text) {
+  const raw = `${text || ""}`;
+  const normalized = normalizeText(raw);
+  if (!normalized) return false;
+
+  if (containsAnyTerm(normalized, RECENT_DATE_TERMS)) return true;
+
+  const dmyMatches = [
+    ...raw.matchAll(/\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b/g),
+  ];
+  for (const [, day, month, year] of dmyMatches) {
+    const parsed = parseDmyDate(day, month, year);
+    if (isRecentCalendarDate(parsed, 14)) return true;
+  }
+
+  const ymdMatches = [...raw.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g)];
+  for (const [, year, month, day] of ymdMatches) {
+    const parsed = parseDmyDate(day, month, year);
+    if (isRecentCalendarDate(parsed, 14)) return true;
+  }
+
+  return false;
+}
+
+function scoreArticle(text, title) {
+  let score = 0;
+  const normalizedText = normalizeText(text || "");
+
+  if (containsAnyTerm(normalizedText, ARTICLE_INSTITUTION_TERMS)) score += 20;
+  if (containsAnyTerm(normalizedText, ARTICLE_CITY_TERMS)) score += 15;
+  if (/\d/.test(text || "")) score += 15;
+  if (containsRecentDateSignal(text)) score += 20;
+  if (/[„"“][^"„”]{6,}[”"“]/.test(text || "")) score += 10;
+  if ((title || "").trim().length > 60) score += 20;
+
+  return score;
+}
+
+function detectViral(text) {
+  const normalizedText = normalizeText(text || "");
+  if (!normalizedText) return false;
+  return containsAnyTerm(normalizedText, VIRAL_TERMS);
+}
+
+function limitTextForGpt(value) {
+  const text = `${value || ""}`;
+  if (text.length <= GPT_TEXT_LIMIT) {
+    return {
+      text,
+      truncated: false,
+      originalLength: text.length,
+    };
+  }
+  return {
+    text: text.slice(0, GPT_TEXT_LIMIT),
+    truncated: true,
+    originalLength: text.length,
+  };
+}
+
+function enterpriseValidationIssues(article) {
+  const issues = [];
+  const lead = firstParagraphText(article?.content_html || "");
+  const leadWords = wordCount(lead);
+  if (!lead || leadWords < 6) {
+    issues.push("missing_lead");
+  }
+  if (!(article?.meta_description || "").trim()) {
+    issues.push("missing_meta");
+  }
+  if (!(article?.focus_keyword || "").trim()) {
+    issues.push("missing_keyword");
+  }
+  if (plainTextLength(article?.content_html || "") < ENTERPRISE_PUBLISH_MIN_CHARS) {
+    issues.push("length_lt_1500");
+  }
+  return issues;
+}
+
+function logEnterpriseStatus(title, metrics) {
+  const safeTitle = cleanTitle(title || "", 120) || "fara_titlu";
+  console.log(
+    `ENTERPRISE_LOG ${safeTitle}: ${JSON.stringify({
+      score: Number(metrics?.score || 0),
+      viral: Boolean(metrics?.viral),
+      duplicate: Boolean(metrics?.duplicate),
+      extended: Boolean(metrics?.extended),
+      published: Boolean(metrics?.published),
+    })}`
+  );
 }
 
 function stripH1(html) {
@@ -1265,6 +1640,13 @@ function candidateRejectionReason(item) {
   if (!item?.publishedAt && hasOnlyOldYears(combined)) {
     return "only_old_years_without_date";
   }
+  const enterpriseScore = scoreArticle(
+    `${item?.title || ""} ${item?.content || ""}`,
+    item?.title || ""
+  );
+  if (enterpriseScore < ENTERPRISE_SCORE_MIN) {
+    return "enterprise_score_below_threshold";
+  }
   const size = (item.content || "").length;
   const hasEnough = size >= MIN_CONTENT_CHARS || item.title.length > 20;
   if (!hasEnough) return "too_little_content";
@@ -1444,6 +1826,12 @@ async function tryPublishArticle(
 
   const stableSlug = buildStablePostSlug(article, sourceUrl);
 
+  const enterpriseIssues = enterpriseValidationIssues(article);
+  if (enterpriseIssues.length > 0) {
+    console.log("Enterprise validation failed. Skipping:", enterpriseIssues.join(", "));
+    return false;
+  }
+
   if (!article.content_html || !hasMinimumContent(article.content_html)) {
     console.log("Content too short or missing. Skipping.");
     return false;
@@ -1487,14 +1875,37 @@ async function tryPublishArticle(
   }
 
   saveTopic({ title: article.title, sourceTitle, url: sourceUrl });
+  rememberEnterpriseDuplicateText(article.title, article.content_html || "");
   console.log("Published:", article.title);
   return true;
 }
 
 async function publishFromRssItem(item) {
+  const rawSourceText = [item.title, item.content].filter(Boolean).join("\n\n");
+  const enterpriseAudit = {
+    score: scoreArticle(rawSourceText, item.title),
+    viral: detectViral(rawSourceText),
+    duplicate: false,
+    extended: false,
+    published: false,
+  };
+  const finish = result => {
+    enterpriseAudit.published = Boolean(result);
+    logEnterpriseStatus(item?.title || "", enterpriseAudit);
+    return result;
+  };
+
+  if (enterpriseAudit.score < ENTERPRISE_SCORE_MIN) {
+    console.log(
+      `Enterprise score too low (${enterpriseAudit.score}/${ENTERPRISE_SCORE_MIN}). Skipping: ${item.title}`
+    );
+    return finish(false);
+  }
+
   if (isDuplicate({ title: item.title, sourceTitle: item.title, url: item.link })) {
+    enterpriseAudit.duplicate = true;
     console.log("Duplicate source item. Skipping:", item.title);
-    return false;
+    return finish(false);
   }
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
@@ -1502,34 +1913,51 @@ async function publishFromRssItem(item) {
       isHardBlockedMediaOutletPromoText(`${item?.title || ""} ${item?.content || ""}`))
   ) {
     console.log("Rejected media-outlet promo item. Skipping:", item.title);
-    return false;
+    return finish(false);
   }
 
-  const raw = [item.title, item.content].filter(Boolean).join("\n\n");
+  const duplicateProbe = detectEnterpriseDuplicate(rawSourceText);
+  if (duplicateProbe.isDuplicate) {
+    enterpriseAudit.duplicate = true;
+    console.log(
+      `Enterprise duplicate similarity=${duplicateProbe.similarity.toFixed(3)} > ${ENTERPRISE_DUPLICATE_THRESHOLD} (postId=${duplicateProbe.matchedId || "n/a"})`
+    );
+    return finish(false);
+  }
+
+  const gptInput = limitTextForGpt(rawSourceText);
+  if (gptInput.truncated) {
+    console.log(
+      `GPT input trimmed: ${gptInput.originalLength} -> ${gptInput.text.length} chars`
+    );
+  }
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
     ? buildSourceRoleClaims(item)
     : new Map();
   const roleConstraints = buildRoleConstraintsFromClaims(sourceRoleClaims);
+  const promptMode = enterpriseAudit.viral ? "long" : "standard";
 
-  let article = await rewriteNews(raw, item.title, {
+  let article = await rewriteNews(gptInput.text, item.title, {
     publishedAt: item.publishedAt,
     source: item.source,
     link: item.link,
     roleConstraints,
+    promptMode,
   });
 
-  if (!article) return false;
+  if (!article) return finish(false);
 
   if (countContextWordOccurrences(article.content_html) > CONTEXT_WORD_MAX_OCCURRENCES) {
     console.log("Style retry: reducing repetitive use of 'context'.");
-    article = await rewriteNews(raw, item.title, {
+    article = await rewriteNews(gptInput.text, item.title, {
       publishedAt: item.publishedAt,
       source: item.source,
       link: item.link,
       roleConstraints,
+      promptMode,
       strictStyleMode: true,
     });
-    if (!article) return false;
+    if (!article) return finish(false);
   }
 
   if (ROLE_FACT_CHECK_ENABLED && sourceRoleClaims.size > 0) {
@@ -1539,14 +1967,15 @@ async function publishFromRssItem(item) {
         "Role mismatch detected, retrying strict factual mode:",
         formatRoleMismatchSummary(mismatches)
       );
-      article = await rewriteNews(raw, item.title, {
+      article = await rewriteNews(gptInput.text, item.title, {
         publishedAt: item.publishedAt,
         source: item.source,
         link: item.link,
         roleConstraints,
+        promptMode,
         strictRoleMode: true,
       });
-      if (!article) return false;
+      if (!article) return finish(false);
 
       mismatches = roleMismatchSummary(item, article, sourceRoleClaims);
       if (mismatches.length > 0) {
@@ -1554,9 +1983,35 @@ async function publishFromRssItem(item) {
           "Role mismatch persists. Skipping article:",
           formatRoleMismatchSummary(mismatches)
         );
-        return false;
+        return finish(false);
       }
     }
+  }
+
+  const initialLength = plainTextLength(article.content_html || "");
+  if (initialLength < SHORT_ARTICLE_MIN_CHARS) {
+    const extendedArticle = await extendArticleJournalistic(article, {
+      minChars: SHORT_ARTICLE_MIN_CHARS,
+      sourceTitle: item.title,
+      sourceText: gptInput.text,
+      sourceLink: item.link,
+    });
+    const extendedLength = plainTextLength(extendedArticle?.content_html || "");
+    if (extendedLength > initialLength) {
+      enterpriseAudit.extended = true;
+      article = extendedArticle;
+      console.log(
+        `Enterprise extension applied: ${initialLength} -> ${extendedLength} chars`
+      );
+    }
+  }
+
+  const discoverTitle = await rewriteTitleForDiscover(article.title, {
+    context: [item.title, item.source, item.link].filter(Boolean).join(" | "),
+  });
+  if (discoverTitle && discoverTitle !== article.title) {
+    article.title = discoverTitle;
+    article.seo_title = cleanTitle(discoverTitle, SEO_TITLE_MAX_CHARS);
   }
 
   article.content_html = sanitizeContent(article.content_html);
@@ -1572,14 +2027,14 @@ async function publishFromRssItem(item) {
       ))
   ) {
     console.log("Rejected rewritten media-outlet promo article. Skipping:", article.title);
-    return false;
+    return finish(false);
   }
 
   if (!isStrongTitle(article.title)) {
     const fallbackTitle = cleanTitle(item.title, TITLE_MAX_CHARS);
     if (!isStrongTitle(fallbackTitle) || hasHeadlineStyleIssues(fallbackTitle).length > 0) {
       console.log("Title quality too low. Skipping.");
-      return false;
+      return finish(false);
     }
     article.title = fallbackTitle;
     article.seo_title = cleanTitle(
@@ -1596,13 +2051,13 @@ async function publishFromRssItem(item) {
       article.seo_title = cleanTitle(article.seo_title || fallbackTitle, SEO_TITLE_MAX_CHARS);
     } else {
       console.log(`Title style quality too low (${headlineIssues.join(", ")}). Skipping.`);
-      return false;
+      return finish(false);
     }
   }
 
   if (!hasMinimumContent(article.content_html)) {
     console.log("Sanitized content too short. Skipping.");
-    return false;
+    return finish(false);
   }
 
   const categoryDecision = resolveCategoryId(item, article);
@@ -1636,11 +2091,12 @@ async function publishFromRssItem(item) {
     const issues = qualityGateIssues(article);
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
-      return false;
+      return finish(false);
     }
   }
 
-  return tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
+  const published = await tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
+  return finish(published);
 }
 
 async function publishFallbackArticle() {
@@ -1742,6 +2198,7 @@ async function run() {
   if (candidates.length === 0) {
     console.log("Candidate rejection summary:", rejectionStats);
   }
+  await refreshEnterpriseDuplicateCorpus();
   let published = 0;
 
   for (const item of candidates) {

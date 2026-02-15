@@ -1,6 +1,9 @@
 // src/ai.js
 import OpenAI from "openai";
-import { NEWS_REWRITE_PROMPT } from "./prompts.js";
+import {
+  LONG_ARTICLE_PROMPT,
+  STANDARD_ARTICLE_PROMPT,
+} from "./prompts.js";
 import {
   cleanTitle,
   extractJson,
@@ -34,6 +37,14 @@ const MIN_WORDS = parsePositiveInt(AI_MIN_WORDS, 350);
 const REWRITE_ATTEMPTS = Math.min(parsePositiveInt(AI_REWRITE_ATTEMPTS, 2), 4);
 const TITLE_MAX_CHARS = parsePositiveInt(process.env.TITLE_MAX_CHARS || "110", 110);
 const SEO_TITLE_MAX_CHARS = parsePositiveInt(process.env.SEO_TITLE_MAX_CHARS || "60", 60);
+const SHORT_ARTICLE_MIN_CHARS = parsePositiveInt(
+  process.env.SHORT_ARTICLE_MIN_CHARS || "1800",
+  1800
+);
+const DISCOVER_TITLE_MAX_CHARS = parsePositiveInt(
+  process.env.DISCOVER_TITLE_MAX_CHARS || process.env.TITLE_MAX_CHARS || "110",
+  110
+);
 
 function hasHeadlineStyleIssues(title) {
   return hasEnigmaticTitleSignals(title) || hasSuperlativeTitleSignals(title);
@@ -74,12 +85,16 @@ function keywordFromText(text) {
     .join(" ");
 }
 
+function rewritePromptTemplate(promptMode) {
+  return promptMode === "long" ? LONG_ARTICLE_PROMPT : STANDARD_ARTICLE_PROMPT;
+}
+
 function buildPrompt(rawContent, originalTitle, meta, attempt) {
   const roleConstraints = (meta?.roleConstraints || "")
     .toString()
     .trim() || "- Pastreaza functiile oficiale exact asa cum apar in sursa.";
 
-  const base = NEWS_REWRITE_PROMPT
+  const base = rewritePromptTemplate(meta?.promptMode)
     .replace("{{TITLE}}", originalTitle || "")
     .replace("{{CONTENT}}", rawContent || "")
     .replace("{{PUBLISHED_AT}}", meta?.publishedAt || "")
@@ -282,4 +297,151 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
     }
   }
   return null;
+}
+
+function textLength(value) {
+  return stripHtml(value || "").replace(/\s+/g, " ").trim().length;
+}
+
+export async function extendArticleJournalistic(article, options = {}) {
+  if (!article?.content_html) return article;
+
+  const minChars = parsePositiveInt(options.minChars || SHORT_ARTICLE_MIN_CHARS, 1800);
+  const currentLength = textLength(article.content_html);
+  if (currentLength >= minChars) return article;
+
+  const sourceTitle = `${options.sourceTitle || article.title || ""}`.trim();
+  const sourceText = `${options.sourceText || ""}`.trim();
+  const sourceLink = `${options.sourceLink || ""}`.trim();
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await client.chat.completions.create({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Esti un editor jurnalistic senior. Extinzi textul factual fara inventii si fara speculatii. Pastrezi tonul profesionist si structura SEO.",
+          },
+          {
+            role: "user",
+            content: `Extinde articolul jurnalistic fara inventii.
+
+Conditii:
+- Nu adauga fapte care nu exista in sursa.
+- Pastreaza titlul si focusul subiectului.
+- Mentine structura HTML jurnalistica (<p>, <h2>, <h3>, <strong>, <blockquote>, <ul>, <ol>, <li>).
+- Pastreaza si completeaza meta_description, focus_keyword si tags.
+- Tinta minima de continut: ${minChars} caractere text (fara HTML), daca sursa permite.
+
+Sursa (optional):
+Titlu sursa: ${sourceTitle}
+Link sursa: ${sourceLink}
+Text sursa:
+"""
+${sourceText.slice(0, 3500)}
+"""
+
+Articol curent JSON:
+${JSON.stringify(
+  {
+    title: article.title,
+    seo_title: article.seo_title,
+    meta_description: article.meta_description,
+    focus_keyword: article.focus_keyword,
+    tags: article.tags,
+    content_html: article.content_html,
+  },
+  null,
+  2
+)}
+
+Returneaza STRICT JSON:
+{
+  "title": "",
+  "seo_title": "",
+  "meta_description": "",
+  "focus_keyword": "",
+  "tags": ["", ""],
+  "content_html": ""
+}`,
+          },
+        ],
+        temperature: 0.25,
+        max_tokens: 2200,
+        response_format: { type: "json_object" },
+      });
+
+      const text = response.choices[0]?.message?.content;
+      const data = extractJson(text || "");
+      if (!data) continue;
+
+      const candidate = normalizeArticle(data, article.title || sourceTitle);
+      if (!candidate?.content_html) continue;
+
+      const candidateLength = textLength(candidate.content_html);
+      if (candidateLength <= currentLength) continue;
+
+      return {
+        ...article,
+        ...candidate,
+      };
+    } catch (err) {
+      console.warn(`AI EXTEND WARN (attempt ${attempt}/2):`, err.message);
+    }
+  }
+
+  return article;
+}
+
+export async function rewriteTitleForDiscover(title, options = {}) {
+  const currentTitle = cleanTitle(title, DISCOVER_TITLE_MAX_CHARS);
+  if (!currentTitle) return "";
+
+  try {
+    const response = await client.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Esti editor Google Discover. Rescrii titluri factuale, clare, cu actorul principal la inceput, fara clickbait si fara intrebari.",
+        },
+        {
+          role: "user",
+          content: `Rescrie titlul pentru Discover.
+
+Reguli:
+- actor first (persoana, institutie, oras, club etc. la inceput daca este disponibil in context)
+- fara clickbait
+- fara semn de intrebare
+- fara superlative neacoperite factual
+- stil jurnalistic, clar, direct
+- maxima claritate in limba romana
+
+Titlu curent: ${currentTitle}
+Context sursa: ${(options.context || "").slice(0, 700)}
+
+Returneaza STRICT JSON:
+{"title": ""}`,
+        },
+      ],
+      temperature: 0.15,
+      max_tokens: 120,
+      response_format: { type: "json_object" },
+    });
+
+    const text = response.choices[0]?.message?.content;
+    const data = extractJson(text || "");
+    const candidateRaw = `${data?.title || ""}`.trim();
+    const candidate = cleanTitle(candidateRaw, DISCOVER_TITLE_MAX_CHARS);
+    if (!candidate) return currentTitle;
+    if (candidate.includes("?")) return currentTitle;
+    if (hasHeadlineStyleIssues(candidate)) return currentTitle;
+    return candidate;
+  } catch (err) {
+    console.warn("AI DISCOVER TITLE WARN:", err.message);
+    return currentTitle;
+  }
 }

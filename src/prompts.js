@@ -1,6 +1,6 @@
 // src/prompts.js
 
-export const NEWS_REWRITE_PROMPT = `
+export const STANDARD_ARTICLE_PROMPT = `
 Ești jurnalist profesionist. Rescrie știrea de mai jos în limba română,
 într-un stil jurnalistic clar, neutru și informat.
 
@@ -71,3 +71,15 @@ Conținut:
 {{CONTENT}}
 """
 `;
+
+export const LONG_ARTICLE_PROMPT = `${STANDARD_ARTICLE_PROMPT}
+
+REGULI SUPLIMENTARE PENTRU SUBIECTE VIRALE:
+- Extinde contextul factual în paragrafe suplimentare, fără a inventa.
+- Include impact practic pentru public (ce se schimbă concret, pentru cine, când).
+- Dacă există implicații administrative/economice/sociale, explică-le pe scurt în secțiuni H2 separate.
+- Menține tonul sobru și evită dramatizarea chiar când subiectul este sensibil.
+`;
+
+// Backward compatibility pentru cod existent.
+export const NEWS_REWRITE_PROMPT = STANDARD_ARTICLE_PROMPT;

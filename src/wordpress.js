@@ -334,6 +334,95 @@ export async function getRecentPostsForInternalLinks(options = {}) {
   }
 }
 
+export async function getRecentPostsForDuplicateSimilarity(options = {}) {
+  const limitRaw = Number(options.limit || 200);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(Math.floor(limitRaw), 200))
+    : 200;
+
+  const perPage = Math.min(100, limit);
+  const pages = Math.max(1, Math.ceil(limit / perPage));
+  const rows = [];
+
+  for (let page = 1; page <= pages; page += 1) {
+    const params = new URLSearchParams({
+      per_page: String(perPage),
+      page: String(page),
+      orderby: "date",
+      order: "desc",
+      _fields: "id,slug,title.rendered,content.rendered,date,date_gmt",
+    });
+    const requestPath = wpApi(`/posts?${params.toString()}`);
+
+    let data = [];
+    try {
+      const res = await axios.get(requestPath, { auth });
+      data = res.data || [];
+    } catch (authErr) {
+      try {
+        const res = await axios.get(requestPath);
+        data = res.data || [];
+      } catch (err) {
+        console.warn("DUPLICATE SIMILARITY FETCH ERROR:", err.message);
+        break;
+      }
+    }
+
+    if (!Array.isArray(data) || data.length === 0) break;
+    rows.push(...data);
+    if (data.length < perPage) break;
+  }
+
+  return rows.slice(0, limit).map(post => ({
+    id: Number(post?.id || 0),
+    slug: `${post?.slug || ""}`.trim(),
+    date: `${post?.date || ""}`.trim(),
+    date_gmt: `${post?.date_gmt || ""}`.trim(),
+    title: stripHtml(post?.title?.rendered || "").replace(/\s+/g, " ").trim(),
+    content: stripHtml(post?.content?.rendered || "").replace(/\s+/g, " ").trim(),
+  }));
+}
+
+export async function countPostsPublishedTodayByCategory(categoryId, options = {}) {
+  const category = Number(categoryId || 0);
+  if (!Number.isFinite(category) || category <= 0) return 0;
+
+  const timeZone = `${options.timeZone || "Europe/Bucharest"}`.trim() || "Europe/Bucharest";
+  const now = options.now instanceof Date ? options.now : new Date();
+  const todayKey = dayKeyInTimeZone(now, timeZone);
+
+  const params = new URLSearchParams({
+    per_page: "100",
+    orderby: "date",
+    order: "desc",
+    categories: String(category),
+    _fields: "id,status,date,date_gmt",
+  });
+
+  const requestPath = wpApi(`/posts?${params.toString()}`);
+
+  const toCount = posts =>
+    (posts || []).filter(post => {
+      const status = `${post?.status || "publish"}`.toLowerCase();
+      if (status !== "publish") return false;
+      const date = parseWpPostDate(post);
+      if (!date) return false;
+      return dayKeyInTimeZone(date, timeZone) === todayKey;
+    }).length;
+
+  try {
+    const res = await axios.get(requestPath, { auth });
+    return toCount(res.data);
+  } catch (authErr) {
+    try {
+      const res = await axios.get(requestPath);
+      return toCount(res.data);
+    } catch (err) {
+      console.warn("COUNT POSTS ERROR:", err.message);
+      return 0;
+    }
+  }
+}
 export async function publishPost(article, categoryId, imageId, options = {}) {
   const meta = {};
 
