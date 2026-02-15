@@ -16,7 +16,7 @@ REGULI OBLIGATORII:
 - Fără secțiune intitulată „Concluzie”.
 - Ton profesionist, informativ, fără senzaționalism.
 - Evită expresii tabloid (ex.: „șoc”, „bombă”, „halucinant”, „de necrezut”).
-- Paragrafe scurte (2–3 propoziții).
+- Folosește compunere variată: alternează paragrafe scurte cu paragrafe de context.
 - Evita formularea repetitiva „in contextul”; foloseste un stil direct, variat, jurnalistic.
 - Evită formule enigmatice în titlu (ex.: „un jucător”, „o vedetă”, „acesta...”).
 - Evită superlative și hiperbole în titlu (ex.: „cel mai”, „istoric”, „uriaș”), dacă nu sunt strict susținute factual.
@@ -35,11 +35,11 @@ STRUCTURĂ:
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Fără semne de exclamare în titlu.
 - Lead (1 paragraf).
-- După lead, include o secțiune H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>.
+- Pentru subiecte complexe, poți include după lead o secțiune H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>.
 - După lead, include un paragraf scurt de context factual (de ce subiectul contează acum).
 - Corp articol cu H2/H3 unde e relevant.
 - Include cel puțin 3 subtitluri H2 descriptive (utile pentru cuprins).
-- Include clar secțiuni de tip „Ce s-a întâmplat”, „Reacții/Declarații” (dacă există), „Ce urmează”.
+- Când subiectul o cere, include secțiuni de tip „Ce s-a întâmplat”, „Reacții/Declarații” (dacă există), „Ce urmează”.
 - Final deschis, informativ (fără concluzie explicită).
 
 SEO:

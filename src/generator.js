@@ -173,6 +173,7 @@ REGULI:
 - Stil profesionist, natural, fără cuvinte pompoase
 - Propoziții scurte și clare
 - Fără limbaj emoțional, fără umplutură și fără entuziasm fals
+- Compunere variată: alternează paragrafe scurte cu paragrafe de context factual
 - Evită formulări tabloid (ex.: „șoc”, „bombă”, „de necrezut”)
 - Evită titluri enigmatice (ex.: „un jucător”, „o vedetă”, „acesta...”)
 - Evită superlative de tip „cel mai”, „istoric”, „uriaș” dacă nu sunt susținute factual
@@ -181,11 +182,11 @@ REGULI:
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
-- După lead, include secțiunea H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>
+- Pentru subiecte complexe, poți include după lead secțiunea H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>
 - După lead, adaugă un paragraf scurt de context factual (de ce subiectul contează acum)
-- 2–4 paragrafe explicative
+- Dezvoltă subiectul în mai multe paragrafe explicative, cu unghiuri distincte
 - Include cel puțin 3 subtitluri H2 descriptive
-- Include o secțiune finală H2 de tip „Ce urmează”
+- Când subiectul o cere, include o secțiune finală H2 de tip „Ce urmează”
 
 Categoria: ${category}
 
@@ -289,7 +290,7 @@ export async function generateArticle(category) {
           {
             role: "system",
             content:
-              "Ești un jurnalist profesionist de actualitate și editor SEO. Scrii precis, factual, clar, fără speculații și fără exagerări.",
+              "Ești un jurnalist profesionist de actualitate și editor SEO. Scrii precis, factual, clar, cu compunere variată, fără speculații și fără exagerări.",
           },
           { role: "user", content: buildPrompt(category, attempt) },
         ],

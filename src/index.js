@@ -481,8 +481,13 @@ const TABLE_OF_CONTENTS_MIN_HEADINGS = parsePositiveInt(
 );
 const TABLE_OF_CONTENTS_REQUIRED = process.env.TABLE_OF_CONTENTS_REQUIRED === "true";
 const PREMIUM_EDITORIAL_PROFILE = process.env.PREMIUM_EDITORIAL_PROFILE !== "false";
-const PREMIUM_REQUIRE_KEY_FACTS = process.env.PREMIUM_REQUIRE_KEY_FACTS !== "false";
-const PREMIUM_REQUIRE_WHATS_NEXT = process.env.PREMIUM_REQUIRE_WHATS_NEXT !== "false";
+const PREMIUM_ADAPTIVE_SECTIONS = process.env.PREMIUM_ADAPTIVE_SECTIONS !== "false";
+const PREMIUM_REQUIRE_KEY_FACTS = process.env.PREMIUM_REQUIRE_KEY_FACTS === "true";
+const PREMIUM_REQUIRE_WHATS_NEXT = process.env.PREMIUM_REQUIRE_WHATS_NEXT === "true";
+const PREMIUM_COMPLEX_MIN_WORDS = parsePositiveInt(
+  process.env.PREMIUM_COMPLEX_MIN_WORDS || "260",
+  260
+);
 const PREMIUM_KEY_FACTS_MIN_ITEMS = parsePositiveInt(
   process.env.PREMIUM_KEY_FACTS_MIN_ITEMS || "3",
   3
@@ -1368,10 +1373,22 @@ function applyPremiumEditorialStructure(article, options = {}) {
   if (!PREMIUM_EDITORIAL_PROFILE || !article?.content_html) return;
   const enableKeyFacts = options.keyFacts !== false;
   const enableWhatsNext = options.whatsNext !== false;
-  if (PREMIUM_REQUIRE_KEY_FACTS && enableKeyFacts) {
+
+  const words = wordCount(stripHtml(article.content_html || ""));
+  const paragraphCount = paragraphTexts(article.content_html, 30).length;
+  const isComplexStory = words >= PREMIUM_COMPLEX_MIN_WORDS || paragraphCount >= 6;
+
+  const shouldAddKeyFacts =
+    enableKeyFacts &&
+    (PREMIUM_REQUIRE_KEY_FACTS || (PREMIUM_ADAPTIVE_SECTIONS && isComplexStory));
+  const shouldAddWhatsNext =
+    enableWhatsNext &&
+    (PREMIUM_REQUIRE_WHATS_NEXT || (PREMIUM_ADAPTIVE_SECTIONS && isComplexStory));
+
+  if (shouldAddKeyFacts) {
     ensureKeyFactsSection(article);
   }
-  if (PREMIUM_REQUIRE_WHATS_NEXT && enableWhatsNext) {
+  if (shouldAddWhatsNext) {
     ensureWhatsNextSection(article);
   }
 }
@@ -2330,7 +2347,7 @@ async function publishFromRssItem(item) {
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article, {
       expectsSourceAttribution: Boolean(sourceItem?.link),
-      requirePremiumSections: true,
+      requirePremiumSections: PREMIUM_REQUIRE_KEY_FACTS || PREMIUM_REQUIRE_WHATS_NEXT,
     });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
@@ -2406,7 +2423,7 @@ async function publishFallbackArticle() {
     if (STRICT_QUALITY_GATE) {
       const issues = qualityGateIssues(article, {
         expectsSourceAttribution: false,
-        requirePremiumSections: true,
+        requirePremiumSections: PREMIUM_REQUIRE_KEY_FACTS || PREMIUM_REQUIRE_WHATS_NEXT,
       });
       if (issues.length > 0) {
         console.log("Fallback quality gate failed:", issues.join(", "));
