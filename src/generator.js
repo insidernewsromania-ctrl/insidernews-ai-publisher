@@ -181,9 +181,11 @@ REGULI:
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
+- După lead, include secțiunea H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>
 - După lead, adaugă un paragraf scurt de context factual (de ce subiectul contează acum)
 - 2–4 paragrafe explicative
 - Include cel puțin 3 subtitluri H2 descriptive
+- Include o secțiune finală H2 de tip „Ce urmează”
 
 Categoria: ${category}
 
@@ -202,7 +204,7 @@ REGULI OUTPUT:
 - seo_title: concis pentru SEO, fara limita rigida de caractere.
 - meta_description: utila pentru cititor, fara limita rigida de caractere.
 - tags: 2–5 taguri, fără #.
-- content_html: doar HTML cu <p>, <h2>, <h3>, <strong>; fără H1.
+- content_html: doar HTML cu <p>, <h2>, <h3>, <strong>, <ul>, <ol>, <li>; fără H1.
 - Titlul trebuie să fie complet, coerent, fără final tăiat.
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Fără semne de exclamare în titlu.
@@ -287,7 +289,7 @@ export async function generateArticle(category) {
           {
             role: "system",
             content:
-              "Ești un jurnalist profesionist de actualitate. Scrii precis, factual, fără speculații și fără exagerări.",
+              "Ești un jurnalist profesionist de actualitate și editor SEO. Scrii precis, factual, clar, fără speculații și fără exagerări.",
           },
           { role: "user", content: buildPrompt(category, attempt) },
         ],

@@ -185,7 +185,7 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
           {
             role: "system",
             content:
-              "Esti un jurnalist profesionist, riguros factual, precis si clar. Evita cliseele, repetiile si limbajul promotional despre alte publicatii.",
+              "Esti un jurnalist senior de actualitate si editor SEO. Scrii riguros factual, clar, natural si util pentru cititor. Eviti cliseele, repetitiile si limbajul promotional despre alte publicatii.",
           },
           {
             role: "user",
