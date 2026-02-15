@@ -34,6 +34,431 @@ export function truncate(text, maxLength) {
   return text.slice(0, maxLength).trimEnd();
 }
 
+export function truncateAtWord(text, maxLength) {
+  if (!text) return "";
+  const normalized = text.toString().replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  const sample = normalized.slice(0, maxLength + 1);
+  const lastSpace = sample.lastIndexOf(" ");
+  if (lastSpace >= Math.floor(maxLength * 0.6)) {
+    return sample.slice(0, lastSpace).trimEnd();
+  }
+  return normalized.slice(0, maxLength).trimEnd();
+}
+
+const TITLE_END_STOPWORDS = new Set([
+  "si",
+  "sau",
+  "cu",
+  "de",
+  "din",
+  "la",
+  "in",
+  "pe",
+  "pentru",
+  "ca",
+  "iar",
+  "dar",
+  "ori",
+  "al",
+  "ale",
+  "a",
+  "un",
+  "o",
+]);
+
+const VAGUE_SUBJECT_TERMS = [
+  "jucator",
+  "sportiv",
+  "fotbalist",
+  "atacant",
+  "fundas",
+  "portar",
+  "antrenor",
+  "vedeta",
+  "actor",
+  "cantaret",
+  "artist",
+  "politician",
+  "demnitar",
+  "afacerist",
+  "milionar",
+  "roman",
+  "romanca",
+  "tanar",
+  "tanara",
+  "barbat",
+  "femeie",
+  "elev",
+  "profesor",
+  "medic",
+  "sofer",
+  "persoana",
+];
+
+const ENIGMATIC_TITLE_PATTERNS = [
+  /^(?:acest|aceasta|acesta|acestea|el|ea)\b/,
+  /\b(?:ce\s+a\s+urmat|uite\s+cine|nu\s+o\s+sa\s+iti\s+vina\s+sa\s+crezi)\b/,
+  /\b(?:mister|misterios|enigmatic)\b/,
+];
+
+const SUPERLATIVE_TITLE_PHRASES = [
+  "soc total",
+  "de necrezut",
+  "halucinant",
+  "fara precedent",
+  "record absolut",
+  "istoric",
+  "urias",
+  "uriasa",
+  "colosal",
+  "exploziv",
+  "senzational",
+];
+
+const INCOMPLETE_CONNECTOR_SEQUENCES = [
+  ["in", "timp", "ce"],
+  ["dupa", "ce"],
+  ["pe", "cand"],
+  ["pentru", "ca"],
+  ["deoarece"],
+  ["fiindca"],
+  ["intrucat"],
+  ["in", "conditiile", "in", "care"],
+  ["in", "contextul", "in", "care"],
+];
+
+const PUBLISHER_SUFFIX_HINTS = [
+  "agerpres",
+  "mediafax",
+  "digi24",
+  "hotnews",
+  "g4media",
+  "stirileprotv",
+  "economica",
+  "spotmedia",
+  "observator",
+  "libertatea",
+  "adevarul",
+  "euronews",
+  "antena3",
+  "tvrinfo",
+  "wall street",
+  "startupcafe",
+  "profit",
+  "biziday",
+  "news ro",
+  "zf",
+  "google news",
+];
+
+const SOURCE_ATTRIBUTION_CUES = [
+  "potrivit",
+  "conform",
+  "citand",
+  "citeaza",
+  "scrie",
+  "anunta",
+  "transmite",
+  "informeaza",
+  "relateaza",
+];
+
+const TOPIC_NOISE_TOKENS = new Set([
+  "a",
+  "al",
+  "ale",
+  "anunta",
+  "anuntat",
+  "anuntata",
+  "anuntate",
+  "au",
+  "ca",
+  "care",
+  "catre",
+  "ce",
+  "com",
+  "conform",
+  "cu",
+  "de",
+  "despre",
+  "din",
+  "dupa",
+  "este",
+  "fata",
+  "fi",
+  "for",
+  "g4",
+  "g4media",
+  "in",
+  "insa",
+  "la",
+  "libertatea",
+  "media",
+  "mediafax",
+  "news",
+  "newsro",
+  "online",
+  "or",
+  "pe",
+  "pentru",
+  "profit",
+  "protv",
+  "potrivit",
+  "prin",
+  "publica",
+  "publicat",
+  "publicata",
+  "publicate",
+  "ro",
+  "sau",
+  "si",
+  "site",
+  "stirileprotv",
+  "stiri",
+  "the",
+  "to",
+  "tv",
+  "digi24",
+  "hotnews",
+  "adevarul",
+  "euronews",
+  "observator",
+  "antena3",
+  "un",
+  "unei",
+  "unor",
+  "www",
+]);
+
+function looksLikePublisherSuffix(text) {
+  if (!text) return false;
+  const normalized = normalizeText(text);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 6) return false;
+  if (
+    normalized.includes("news") ||
+    normalized.includes("stiri") ||
+    normalized.includes("tv") ||
+    normalized.includes("radio") ||
+    text.includes(".")
+  ) {
+    return true;
+  }
+  return PUBLISHER_SUFFIX_HINTS.some(hint => normalized.includes(hint));
+}
+
+function trimPublisherSuffix(text) {
+  const segments = (text || "")
+    .split(/\s[-–—|]\s/g)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) return text || "";
+  const suffix = segments[segments.length - 1];
+  if (!looksLikePublisherSuffix(suffix)) return text || "";
+  return segments.slice(0, -1).join(" - ").trim();
+}
+
+function looksLikeMediaSourceFragment(text) {
+  if (!text) return false;
+  if (looksLikePublisherSuffix(text)) return true;
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  if (/\b[a-z0-9-]+\.[a-z]{2,}\b/.test(normalized)) return true;
+  if (
+    normalized.includes("news") ||
+    normalized.includes("media") ||
+    normalized.includes("tv")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function trimSourceAttributionSuffix(text) {
+  let current = (text || "").toString().trim();
+  if (!current) return "";
+  for (let i = 0; i < 2; i += 1) {
+    const match = current.match(
+      /(?:,\s*|\s[-–—|]\s*)(potrivit|conform|citand|citeaza|scrie|anunta|transmite|informeaza|relateaza)\s+([^,;:.!?]+)$/i
+    );
+    if (!match || typeof match.index !== "number") break;
+    const cue = normalizeText(match[1] || "");
+    if (!SOURCE_ATTRIBUTION_CUES.includes(cue)) break;
+    const sourcePart = (match[2] || "").trim();
+    if (!looksLikeMediaSourceFragment(sourcePart)) break;
+    current = current
+      .slice(0, match.index)
+      .replace(/[-–—:;,.!? ]+$/, "")
+      .trim();
+  }
+  return current;
+}
+
+function hasWordSequenceAt(words, startIndex, sequence) {
+  if (startIndex < 0 || startIndex + sequence.length > words.length) return false;
+  for (let index = 0; index < sequence.length; index += 1) {
+    if (words[startIndex + index] !== sequence[index]) return false;
+  }
+  return true;
+}
+
+function getIncompleteEndingWordCount(normalizedText) {
+  const words = (normalizedText || "").split(" ").filter(Boolean);
+  if (words.length < 6) return 0;
+  for (const sequence of INCOMPLETE_CONNECTOR_SEQUENCES) {
+    for (let tail = 0; tail <= 2; tail += 1) {
+      const take = sequence.length + tail;
+      if (take >= words.length) continue;
+      const startIndex = words.length - take;
+      if (hasWordSequenceAt(words, startIndex, sequence)) {
+        return take;
+      }
+    }
+  }
+  return 0;
+}
+
+function trimIncompleteEnding(text) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  if (words.length < 6) return text || "";
+  const normalized = normalizeText(words.join(" "));
+  const removeCount = getIncompleteEndingWordCount(normalized);
+  if (removeCount <= 0) return text || "";
+  if (words.length - removeCount < 5) return text || "";
+  return words
+    .slice(0, words.length - removeCount)
+    .join(" ")
+    .replace(/[-–—:;,.!? ]+$/, "")
+    .trim();
+}
+
+function trimTrailingStopwords(text) {
+  let current = text || "";
+  for (let i = 0; i < 3; i += 1) {
+    const words = current.split(/\s+/).filter(Boolean);
+    if (words.length < 5) return current;
+    const lastWord = words[words.length - 1];
+    const lastNorm = normalizeText(lastWord);
+    if (!TITLE_END_STOPWORDS.has(lastNorm)) return current;
+    words.pop();
+    current = words.join(" ").replace(/[-–—:;,.!? ]+$/, "").trim();
+  }
+  return current;
+}
+
+function hasExplicitEntityMarker(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  if (/\b[A-Z0-9]{2,}\b/.test(value)) return true;
+  if (/\b[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\s+[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}\b/.test(value)) return true;
+  return false;
+}
+
+export function cleanTitle(text, maxLength = 110) {
+  if (!text) return "";
+  const withoutAttribution = trimSourceAttributionSuffix(text.toString());
+  const withoutSuffix = trimPublisherSuffix(withoutAttribution);
+  const normalized = withoutSuffix
+    .toString()
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim()
+    .replace(/^[-–—:;,.!? ]+/, "")
+    .replace(/[-–—:;,.!? ]+$/, "");
+  const truncated = truncateAtWord(normalized, maxLength);
+  const trimmedStopwords = trimTrailingStopwords(truncated);
+  return trimTrailingStopwords(trimIncompleteEnding(trimmedStopwords));
+}
+
+export function buildTopicKey(text, maxTokens = 8) {
+  const cleaned = trimSourceAttributionSuffix(cleanTitle(text || "", 220));
+  const normalized = normalizeText(cleaned);
+  if (!normalized) return "";
+  const tokens = normalized
+    .split(" ")
+    .filter(Boolean)
+    .filter(token => token.length >= 3)
+    .filter(token => !TOPIC_NOISE_TOKENS.has(token))
+    .filter(token => !/^\d+$/.test(token));
+  if (tokens.length === 0) return "";
+  const limit = Number.isFinite(maxTokens)
+    ? Math.max(3, Math.floor(maxTokens))
+    : 8;
+  return tokens.slice(0, limit).join(" ");
+}
+
+export function topicTokens(text, maxTokens = 12) {
+  const key = buildTopicKey(text, maxTokens);
+  return key ? key.split(" ") : [];
+}
+
+export function topicOverlapRatio(aTokens = [], bTokens = []) {
+  if (!Array.isArray(aTokens) || !Array.isArray(bTokens)) return 0;
+  if (aTokens.length === 0 || bTokens.length === 0) return 0;
+  const a = new Set(aTokens.filter(Boolean));
+  const b = new Set(bTokens.filter(Boolean));
+  if (a.size === 0 || b.size === 0) return 0;
+  let overlap = 0;
+  for (const token of a) {
+    if (b.has(token)) overlap += 1;
+  }
+  const denominator = Math.min(a.size, b.size);
+  if (denominator === 0) return 0;
+  return overlap / denominator;
+}
+
+export function hasSuspiciousTitleEnding(text) {
+  if (!text) return true;
+  const normalized = normalizeText(text);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 5) return true;
+  if (/[,:;/-]$/.test(text.trim())) return true;
+  const last = words[words.length - 1];
+  if (TITLE_END_STOPWORDS.has(last)) return true;
+  if (getIncompleteEndingWordCount(normalized) > 0) return true;
+  return false;
+}
+
+export function isStrongTitle(text, minWords = 5) {
+  const cleaned = cleanTitle(text || "", 170);
+  const words = normalizeText(cleaned).split(" ").filter(Boolean);
+  if (words.length < minWords) return false;
+  return !hasSuspiciousTitleEnding(cleaned);
+}
+
+export function hasEnigmaticTitleSignals(text) {
+  const value = `${text || ""}`.trim();
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+
+  if (ENIGMATIC_TITLE_PATTERNS.some(pattern => pattern.test(normalized))) {
+    return true;
+  }
+
+  const vagueSubjectPattern = new RegExp(
+    `\\b(?:un|o)\\s+(?:${VAGUE_SUBJECT_TERMS.join("|")})\\b`
+  );
+  if (vagueSubjectPattern.test(normalized) && !hasExplicitEntityMarker(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function hasSuperlativeTitleSignals(text) {
+  const normalized = normalizeText(text || "");
+  if (!normalized) return false;
+  if (SUPERLATIVE_TITLE_PHRASES.some(phrase => normalized.includes(phrase))) {
+    return true;
+  }
+  if (/\b(?:cel|cea|cei|cele)\s+mai\b/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
 export function extractJson(text) {
   if (!text) return null;
   try {
@@ -78,4 +503,33 @@ export function isRecent(dateValue, maxHours) {
   const hours = hoursSince(dateValue);
   if (hours === null) return false;
   return hours <= maxHours;
+}
+
+function dayKey(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return formatter.format(date);
+  } catch {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+}
+
+export function isSameCalendarDay(
+  dateValue,
+  referenceDate = new Date(),
+  timeZone = "Europe/Bucharest"
+) {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const reference = new Date(referenceDate);
+  if (Number.isNaN(reference.getTime())) return false;
+  return dayKey(date, timeZone) === dayKey(reference, timeZone);
 }
