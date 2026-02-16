@@ -1886,6 +1886,13 @@ function isLikelyMediaOutletPromotion(item) {
   return isLikelyMediaOutletPromotionText(combined);
 }
 
+function countContextWordOccurrences(html) {
+  const normalized = normalizeText(stripHtml(html || ""));
+  if (!normalized) return 0;
+  const matches = normalized.match(/\bcontext(?:ul|ului)?\b/g);
+  return matches ? matches.length : 0;
+}
+
 function appendSourceAttribution(article, item) {
   if (!SOURCE_ATTRIBUTION_ENABLED || !article?.content_html) return;
   if (hasSourceAttributionBlock(article.content_html)) return;
