@@ -2051,19 +2051,6 @@ function qualityGateIssues(article, context = {}) {
   ) {
     issues.push("missing_toc");
   }
-  if (context?.requirePremiumSections && PREMIUM_EDITORIAL_PROFILE) {
-    if (PREMIUM_REQUIRE_KEY_FACTS) {
-      const keyFactsCount = keyFactsListItemCount(article?.content_html || "");
-      if (!hasKeyFactsSection(article?.content_html || "")) {
-        issues.push("missing_key_facts_section");
-      } else if (keyFactsCount < Math.max(1, PREMIUM_KEY_FACTS_MIN_ITEMS)) {
-        issues.push("key_facts_too_short");
-      }
-    }
-    if (PREMIUM_REQUIRE_WHATS_NEXT && !hasWhatsNextSection(article?.content_html || "")) {
-      issues.push("missing_whats_next_section");
-    }
-  }
   return issues;
 }
 
@@ -2759,7 +2746,6 @@ async function publishFromRssItem(item) {
     console.log(`Internal links added: ${linkedCount}`);
   }
   article.content_html = removeExternalLinks(article.content_html);
-  applyPremiumEditorialStructure(article, { keyFacts: true, whatsNext: true });
   applyTableOfContents(article);
   appendSourceAttribution(article, sourceItem);
   appendEditorialNote(article);
@@ -2767,7 +2753,6 @@ async function publishFromRssItem(item) {
   if (STRICT_QUALITY_GATE) {
     const issues = qualityGateIssues(article, {
       expectsSourceAttribution: Boolean(sourceItem?.link),
-      requirePremiumSections: PREMIUM_REQUIRE_KEY_FACTS || PREMIUM_REQUIRE_WHATS_NEXT,
     });
     if (issues.length > 0) {
       console.log("Quality gate failed:", issues.join(", "));
@@ -2837,14 +2822,12 @@ async function publishFallbackArticle() {
       console.log(`Fallback internal links added: ${linkedCount}`);
     }
     article.content_html = removeExternalLinks(article.content_html);
-    applyPremiumEditorialStructure(article, { keyFacts: true, whatsNext: true });
     applyTableOfContents(article);
     appendEditorialNote(article);
 
     if (STRICT_QUALITY_GATE) {
       const issues = qualityGateIssues(article, {
         expectsSourceAttribution: false,
-        requirePremiumSections: PREMIUM_REQUIRE_KEY_FACTS || PREMIUM_REQUIRE_WHATS_NEXT,
       });
       if (issues.length > 0) {
         console.log("Fallback quality gate failed:", issues.join(", "));
