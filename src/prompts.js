@@ -35,11 +35,10 @@ STRUCTURĂ:
 - Nu încheia titlul cu construcții incomplete (ex.: „în timp ce...”, „după ce...”).
 - Fără semne de exclamare în titlu.
 - Lead (1 paragraf).
-- Pentru subiecte complexe, poți include după lead o secțiune H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>.
 - După lead, include un paragraf scurt de context factual (de ce subiectul contează acum).
 - Corp articol cu H2/H3 unde e relevant.
 - Include cel puțin 3 subtitluri H2 descriptive (utile pentru cuprins).
-- Când subiectul o cere, include secțiuni de tip „Ce s-a întâmplat”, „Reacții/Declarații” (dacă există), „Ce urmează”.
+- Când subiectul o cere, include secțiuni descriptive naturale (ex.: „Ce s-a întâmplat”, „Reacții/Declarații”, „Detalii-cheie”).
 - Final deschis, informativ (fără concluzie explicită).
 
 SEO:

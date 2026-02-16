@@ -508,6 +508,8 @@ const PREMIUM_KEY_FACTS_MAX_ITEMS = parsePositiveInt(
   process.env.PREMIUM_KEY_FACTS_MAX_ITEMS || "5",
   5
 );
+const STRIP_FIXED_PREMIUM_HEADINGS =
+  process.env.STRIP_FIXED_PREMIUM_HEADINGS !== "false";
 const HOWTO_DAILY_ENABLED = process.env.HOWTO_DAILY_ENABLED !== "false";
 const HOWTO_DAILY_CATEGORY_ID = parsePositiveInt(
   process.env.HOWTO_DAILY_CATEGORY_ID || "6064",
@@ -1718,6 +1720,40 @@ function applyPremiumEditorialStructure(article, options = {}) {
   }
 }
 
+function stripFixedPremiumSections(article) {
+  if (!STRIP_FIXED_PREMIUM_HEADINGS || !article?.content_html) return 0;
+  const source = article.content_html;
+  const headings = [...source.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map(match => ({
+    index: Number.isFinite(match.index) ? match.index : 0,
+    end: (Number.isFinite(match.index) ? match.index : 0) + match[0].length,
+    text: stripHtml(match[1] || ""),
+  }));
+  if (headings.length === 0) return 0;
+
+  const blockedPrefixes = ["ce trebuie sa stii rapid", "ce urmeaza"];
+  let cursor = 0;
+  let removed = 0;
+  let output = "";
+
+  for (let i = 0; i < headings.length; i += 1) {
+    const headingNorm = normalizeText(headings[i].text);
+    const shouldRemove = blockedPrefixes.some(prefix => headingNorm.startsWith(prefix));
+    if (!shouldRemove) continue;
+
+    const start = headings[i].index;
+    const end = i + 1 < headings.length ? headings[i + 1].index : source.length;
+    output += source.slice(cursor, start);
+    cursor = end;
+    removed += 1;
+  }
+
+  if (removed === 0) return 0;
+
+  output += source.slice(cursor);
+  article.content_html = output.replace(/\n{3,}/g, "\n\n").trim();
+  return removed;
+}
+
 function applyTableOfContents(article) {
   if (!TABLE_OF_CONTENTS_ENABLED || !article?.content_html) return;
   if (hasTableOfContentsBlock(article.content_html)) return;
@@ -2714,6 +2750,10 @@ async function publishFromRssItem(item) {
 
   article.content_html = sanitizeContent(article.content_html);
   ensureSeoFields(article, sourceItem.title);
+  const strippedPremiumSections = stripFixedPremiumSections(article);
+  if (strippedPremiumSections > 0) {
+    console.log(`Removed fixed premium sections: ${strippedPremiumSections}`);
+  }
 
   if (
     BLOCK_MEDIA_OUTLET_PROMO &&
@@ -2820,6 +2860,10 @@ async function publishFallbackArticle() {
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
+    const strippedPremiumSections = stripFixedPremiumSections(article);
+    if (strippedPremiumSections > 0) {
+      console.log(`Fallback removed fixed premium sections: ${strippedPremiumSections}`);
+    }
 
     if (
       BLOCK_MEDIA_OUTLET_PROMO &&
@@ -2956,6 +3000,10 @@ async function maybePublishHowToDaily() {
 
     article.content_html = sanitizeContent(article.content_html);
     ensureSeoFields(article, article.title);
+    const strippedPremiumSections = stripFixedPremiumSections(article);
+    if (strippedPremiumSections > 0) {
+      console.log(`HowTo removed fixed premium sections: ${strippedPremiumSections}`);
+    }
 
     if (!isStrongTitle(article.title)) {
       console.log("HowTo title quality too low. Skipping.");

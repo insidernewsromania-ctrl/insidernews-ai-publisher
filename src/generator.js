@@ -182,11 +182,10 @@ REGULI:
 
 STRUCTURĂ:
 - Lead clar: ce s-a întâmplat ASTĂZI
-- Pentru subiecte complexe, poți include după lead secțiunea H2 „Ce trebuie să știi rapid” cu 3-5 puncte cheie în listă <ul><li>
 - După lead, adaugă un paragraf scurt de context factual (de ce subiectul contează acum)
 - Dezvoltă subiectul în mai multe paragrafe explicative, cu unghiuri distincte
 - Include cel puțin 3 subtitluri H2 descriptive
-- Când subiectul o cere, include o secțiune finală H2 de tip „Ce urmează”
+- Când subiectul o cere, include o secțiune finală descriptivă naturală (ex.: „Detalii-cheie”)
 
 Categoria: ${category}
 
