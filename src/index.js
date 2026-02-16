@@ -375,6 +375,8 @@ const SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT =
 const SOURCE_FEATURED_IMAGE_REQUIRED =
   process.env.SOURCE_FEATURED_IMAGE_REQUIRED === "true";
 const IMAGE_DEBUG = process.env.IMAGE_DEBUG === "true";
+const GENERATED_ARTICLES_DYNAMIC_IMAGE_ENABLED =
+  process.env.GENERATED_ARTICLES_DYNAMIC_IMAGE_ENABLED !== "false";
 const DEFAULT_FEATURED_MEDIA_ID = parsePositiveInt(
   process.env.WP_DEFAULT_FEATURED_MEDIA_ID || "0",
   0
@@ -526,6 +528,8 @@ const HOWTO_SLOT_GRACE_MINUTES = parsePositiveInt(
   20
 );
 const HOWTO_SLOT_STRICT = process.env.HOWTO_SLOT_STRICT !== "false";
+const HOWTO_SLOT_CATCH_UP_ENABLED =
+  process.env.HOWTO_SLOT_CATCH_UP_ENABLED !== "false";
 const ENTERPRISE_SCORE_MIN = parsePositiveInt(
   process.env.ENTERPRISE_SCORE_MIN || "40",
   40
@@ -2337,10 +2341,14 @@ async function maybeUploadImage(article, sourceItem = null) {
   const sourceCandidates = Array.isArray(sourceItem?.imageCandidates)
     ? sourceItem.imageCandidates
     : [];
+  const generatedArticle = !sourceUrl && sourceCandidates.length === 0;
+  const dynamicEnabled =
+    USE_DYNAMIC_IMAGE ||
+    (generatedArticle && GENERATED_ARTICLES_DYNAMIC_IMAGE_ENABLED);
 
   if (IMAGE_DEBUG) {
     console.log(
-      `Image strategy: sourceEnabled=${SOURCE_FEATURED_IMAGE_ENABLED}, sourceRequired=${SOURCE_FEATURED_IMAGE_REQUIRED}, overrideDefault=${SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT}, defaultId=${DEFAULT_FEATURED_MEDIA_ID}, dynamic=${USE_DYNAMIC_IMAGE}, sourceUrl=${sourceUrl || "none"}, rssCandidates=${sourceCandidates.length}`
+      `Image strategy: sourceEnabled=${SOURCE_FEATURED_IMAGE_ENABLED}, sourceRequired=${SOURCE_FEATURED_IMAGE_REQUIRED}, overrideDefault=${SOURCE_FEATURED_IMAGE_OVERRIDE_DEFAULT}, defaultId=${DEFAULT_FEATURED_MEDIA_ID}, dynamicBase=${USE_DYNAMIC_IMAGE}, dynamicEnabled=${dynamicEnabled}, generatedArticle=${generatedArticle}, sourceUrl=${sourceUrl || "none"}, rssCandidates=${sourceCandidates.length}`
     );
   }
 
@@ -2389,6 +2397,32 @@ async function maybeUploadImage(article, sourceItem = null) {
     return null;
   }
 
+  // Pentru articole generate intern (fara sursa), incercam intai imagine dinamica
+  // si folosim imaginea default doar ca fallback.
+  if (generatedArticle && dynamicEnabled) {
+    try {
+      const query = article.focus_keyword || article.title;
+      if (query) {
+        await downloadImage(article.focus_keyword, article.title);
+        imageId = await uploadImage({
+          title: article.seo_title || article.title,
+          altText: article.title || article.focus_keyword,
+          caption: article.meta_description || "",
+        });
+        if (imageId) {
+          if (IMAGE_DEBUG) {
+            console.log(
+              `Image selected: generated dynamic upload media id ${imageId}`
+            );
+          }
+          return imageId;
+        }
+      }
+    } catch (err) {
+      console.log("Generated dynamic image skipped:", err.message);
+    }
+  }
+
   if (hasDefaultImage) {
     if (IMAGE_DEBUG) {
       console.log(`Image selected: fallback default media id ${DEFAULT_FEATURED_MEDIA_ID}`);
@@ -2396,7 +2430,7 @@ async function maybeUploadImage(article, sourceItem = null) {
     return DEFAULT_FEATURED_MEDIA_ID;
   }
 
-  if (!USE_DYNAMIC_IMAGE) {
+  if (!dynamicEnabled) {
     if (IMAGE_DEBUG) {
       console.log("Image result: none (dynamic disabled and no source/default image)");
     }
@@ -2885,12 +2919,21 @@ async function maybePublishHowToDaily() {
   });
 
   if (HOWTO_SLOT_STRICT && !Number.isFinite(activeSlot)) {
+    const allowedByNowForCatchUp = Math.min(HOWTO_DAILY_TARGET, openedSlotsCount);
+    const canCatchUp =
+      HOWTO_SLOT_CATCH_UP_ENABLED && todayCount < allowedByNowForCatchUp;
+    if (canCatchUp) {
+      console.log(
+        `HowTo slot missed, running catch-up (${todayCount}/${allowedByNowForCatchUp}) in ${HOWTO_DAILY_TIMEZONE}`
+      );
+    } else {
     console.log(
       `HowTo slot closed now (${hhmmFromMinutes(nowMinuteOfDay)} ${HOWTO_DAILY_TIMEZONE}); slots: ${slots
         .map(hhmmFromMinutes)
         .join(", ")}`
     );
     return 0;
+    }
   }
 
   const allowedByNow = Math.min(HOWTO_DAILY_TARGET, openedSlotsCount);
