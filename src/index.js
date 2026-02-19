@@ -45,6 +45,8 @@ import {
 
 const categories = [
   { name: "politica", id: 4058 },
+  { name: "stiri_locale", id: 4059 },
+  { name: "evenimente", id: 4061 },
   { name: "social", id: 4063 },
   { name: "economie", id: 4064 },
   { name: "externe", id: 4060 },
@@ -101,9 +103,6 @@ const CATEGORY_KEYWORDS = {
       "inoate",
       "invata",
       "comunitate",
-      "accident",
-      "incendiu",
-      "cutremur",
     ],
     normal: [
       "social",
@@ -121,6 +120,69 @@ const CATEGORY_KEYWORDS = {
       "cultura",
       "societate",
       "ajutor social",
+    ],
+  },
+  4059: {
+    strong: [
+      "stiri locale",
+      "local",
+      "locala",
+      "oras",
+      "municipiu",
+      "comuna",
+      "judet",
+      "primarie",
+      "consiliu judetean",
+      "meteo",
+      "vreme",
+      "avertizare meteo",
+      "cod galben",
+      "cod portocaliu",
+      "cod rosu",
+      "alerta meteo",
+      "anm",
+    ],
+    normal: [
+      "trafic local",
+      "transport local",
+      "strada",
+      "bulevard",
+      "cartier",
+      "zona",
+      "interventie locala",
+      "politie locala",
+      "isu",
+    ],
+  },
+  4061: {
+    strong: [
+      "accident",
+      "accident rutier",
+      "carambol",
+      "incendiu",
+      "explozie",
+      "cutremur",
+      "inundatie",
+      "viitura",
+      "alunecare de teren",
+      "prabusire",
+      "interventie isu",
+      "stare de urgenta",
+      "victime",
+      "decedat",
+      "ranit",
+      "evacuare",
+    ],
+    normal: [
+      "dezastru",
+      "situatie de urgenta",
+      "pompieri",
+      "ambulanta",
+      "smurd",
+      "descarcerare",
+      "pagube",
+      "interventie",
+      "tragedie",
     ],
   },
   4064: {
@@ -285,10 +347,76 @@ const SOCIAL_DECISIVE_TERMS = [
   "pacient",
   "comunitate",
   "familie",
-  "accident",
-  "incendiu",
-  "cutremur",
   "ghid",
+];
+
+const WEATHER_ROUTE_TERMS = [
+  "meteo",
+  "vreme",
+  "avertizare meteo",
+  "cod galben",
+  "cod portocaliu",
+  "cod rosu",
+  "alerta meteo",
+  "prognoza",
+  "canicula",
+  "ger",
+  "viscol",
+  "ninsoare",
+  "furtuna",
+  "ploi torentiale",
+  "temperaturi",
+  "anm",
+];
+
+const LOCAL_ROUTE_SIGNALS = [
+  "local",
+  "locala",
+  "locale",
+  "oras",
+  "municipiu",
+  "comuna",
+  "judet",
+  "judetean",
+  "sector",
+  "primarie",
+  "consiliu local",
+  "bucuresti",
+  "cluj",
+  "iasi",
+  "timisoara",
+  "constanta",
+  "brasov",
+  "sibiu",
+  "oradea",
+  "craiova",
+  "galati",
+  "ploiesti",
+  "pitesti",
+  "arad",
+  "baia mare",
+  "suceava",
+];
+
+const EVENTS_ROUTE_TERMS = [
+  "accident",
+  "accident rutier",
+  "carambol",
+  "incendiu",
+  "explozie",
+  "cutremur",
+  "inundatie",
+  "viitura",
+  "alunecare de teren",
+  "prabusire",
+  "interventie isu",
+  "victime",
+  "decedat",
+  "ranit",
+  "evacuare",
+  "dezastru",
+  "situatie de urgenta",
+  "tragedie",
 ];
 
 const SPORT_DECISIVE_TERMS = [
@@ -1125,6 +1253,36 @@ function decisiveCategoryMatches(item, terms = []) {
   return countKeywordMatches(sourceText, terms);
 }
 
+function resolveSpecialCategoryRoute(item, article) {
+  const routeText = normalizeText(
+    [
+      item?.title,
+      item?.content,
+      item?.source,
+      article?.title,
+      article?.focus_keyword,
+      Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+      stripHtml(article?.content_html || "").slice(0, 1000),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (!routeText) return null;
+
+  const hasWeatherSignals = countKeywordMatches(routeText, WEATHER_ROUTE_TERMS) > 0;
+  if (hasWeatherSignals) {
+    const hasLocalSignals = countKeywordMatches(routeText, LOCAL_ROUTE_SIGNALS) > 0;
+    return hasLocalSignals ? 4059 : 4063;
+  }
+
+  const hasEventSignals = countKeywordMatches(routeText, EVENTS_ROUTE_TERMS) > 0;
+  if (hasEventSignals) {
+    return 4061;
+  }
+
+  return null;
+}
+
 function computeCategoryScores(item, article) {
   const sourceTitleText = normalizeText(item?.title || "");
   const sourceBodyText = normalizeText(
@@ -1215,6 +1373,17 @@ function resolveCategoryId(item, article) {
       changed: Number(item?.categoryId || 0) !== FORCE_CATEGORY_ID,
       scores: {},
       reason: "forced_category",
+    };
+  }
+
+  const specialRouteCategoryId = resolveSpecialCategoryRoute(item, article);
+  if (specialRouteCategoryId && categoryById.has(specialRouteCategoryId)) {
+    return {
+      categoryId: specialRouteCategoryId,
+      changed: Number(item?.categoryId || 0) !== specialRouteCategoryId,
+      scores: {},
+      reason:
+        specialRouteCategoryId === 4061 ? "special_events_route" : "special_weather_route",
     };
   }
 
