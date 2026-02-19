@@ -125,12 +125,6 @@ const CATEGORY_KEYWORDS = {
   4059: {
     strong: [
       "stiri locale",
-      "local",
-      "locala",
-      "oras",
-      "municipiu",
-      "comuna",
-      "judet",
       "primarie",
       "consiliu judetean",
       "meteo",
@@ -143,6 +137,12 @@ const CATEGORY_KEYWORDS = {
       "anm",
     ],
     normal: [
+      "local",
+      "locala",
+      "oras",
+      "municipiu",
+      "comuna",
+      "judet",
       "trafic local",
       "transport local",
       "strada",
@@ -285,13 +285,29 @@ const CATEGORY_KEYWORDS = {
   },
   4780: {
     strong: [
-      "auto",
       "masina",
       "masini",
       "automobil",
       "autoturism",
+      "producator auto",
+      "industrie auto",
+      "piata auto",
+      "lansare auto",
       "dacia",
       "renault",
+      "volkswagen",
+      "skoda",
+      "ford",
+      "opel",
+      "hyundai",
+      "kia",
+      "nissan",
+      "honda",
+      "mazda",
+      "peugeot",
+      "citroen",
+      "fiat",
+      "mg motor",
       "bmw",
       "mercedes",
       "audi",
@@ -300,12 +316,13 @@ const CATEGORY_KEYWORDS = {
       "electrica",
       "hibrid",
       "service auto",
-      "itp",
-      "rovigneta",
+      "motorizare",
+      "facelift",
+      "autonomie",
     ],
     normal: [
-      "sofer",
-      "soferi",
+      "vehicul",
+      "vehicule",
       "caroserie",
       "motor",
       "consum",
@@ -314,10 +331,11 @@ const CATEGORY_KEYWORDS = {
       "anvelope",
       "vulcanizare",
       "inmatriculare",
-      "drumuri",
-      "trafic rutier",
-      "accident rutier",
-      "cod rutier",
+      "dealer auto",
+      "vanzari auto",
+      "retur in service",
+      "rechemare in service",
+      "test drive",
     ],
   },
 };
@@ -434,18 +452,89 @@ const SPORT_DECISIVE_TERMS = [
 ];
 
 const AUTO_DECISIVE_TERMS = [
-  "auto",
   "masina",
   "masini",
   "automobil",
+  "autoturism",
+  "producator auto",
+  "industrie auto",
+  "piata auto",
+  "mg motor",
   "dacia",
+  "renault",
+  "volkswagen",
+  "skoda",
+  "ford",
+  "hyundai",
+  "kia",
+  "nissan",
+  "honda",
+  "mazda",
+  "peugeot",
+  "citroen",
+  "fiat",
   "bmw",
   "mercedes",
   "audi",
   "toyota",
   "tesla",
-  "sofer",
-  "cod rutier",
+  "motorizare",
+  "autonomie",
+  "facelift",
+];
+
+const AUTO_BRAND_ROUTE_TERMS = [
+  "dacia",
+  "renault",
+  "volkswagen",
+  "skoda",
+  "ford",
+  "opel",
+  "hyundai",
+  "kia",
+  "nissan",
+  "honda",
+  "mazda",
+  "peugeot",
+  "citroen",
+  "fiat",
+  "mg motor",
+  "bmw",
+  "mercedes",
+  "audi",
+  "toyota",
+  "tesla",
+];
+
+const AUTO_DOMAIN_ROUTE_TERMS = [
+  "automobil",
+  "autoturism",
+  "producator auto",
+  "industrie auto",
+  "piata auto",
+  "lansare auto",
+  "model nou",
+  "motorizare",
+  "autonomie",
+  "facelift",
+  "test drive",
+  "dealer auto",
+  "vanzari auto",
+  "vehicul electric",
+  "vehicule electrice",
+];
+
+const TRAFFIC_OPERATIONAL_ROUTE_TERMS = [
+  "infotrafic",
+  "trafic rutier",
+  "circulatie rutiera",
+  "drum inchis",
+  "drumuri inchise",
+  "autostrada inchisa",
+  "autostrazi inchise",
+  "drumuri nationale",
+  "blocaj in trafic",
+  "restrictii de circulatie",
 ];
 
 function parsePositiveInt(value, fallback = 0) {
@@ -1269,18 +1358,51 @@ function resolveSpecialCategoryRoute(item, article) {
   );
   if (!routeText) return null;
 
+  const hasEventSignals = countKeywordMatches(routeText, EVENTS_ROUTE_TERMS) > 0;
+  if (hasEventSignals) {
+    return 4061;
+  }
+
   const hasWeatherSignals = countKeywordMatches(routeText, WEATHER_ROUTE_TERMS) > 0;
   if (hasWeatherSignals) {
     const hasLocalSignals = countKeywordMatches(routeText, LOCAL_ROUTE_SIGNALS) > 0;
     return hasLocalSignals ? 4059 : 4063;
   }
 
-  const hasEventSignals = countKeywordMatches(routeText, EVENTS_ROUTE_TERMS) > 0;
-  if (hasEventSignals) {
-    return 4061;
+  const autoBrandMatches = countKeywordMatches(routeText, AUTO_BRAND_ROUTE_TERMS);
+  const autoDomainMatches = countKeywordMatches(routeText, AUTO_DOMAIN_ROUTE_TERMS);
+  if (autoBrandMatches > 0 || autoDomainMatches >= 2) {
+    return 4780;
+  }
+
+  const trafficOperationalSignals =
+    countKeywordMatches(routeText, TRAFFIC_OPERATIONAL_ROUTE_TERMS) > 0;
+  if (trafficOperationalSignals) {
+    const hasLocalSignals = countKeywordMatches(routeText, LOCAL_ROUTE_SIGNALS) > 0;
+    return hasLocalSignals ? 4059 : 4063;
   }
 
   return null;
+}
+
+function hasAutoDomainSignals(item, article) {
+  const routeText = normalizeText(
+    [
+      item?.title,
+      item?.content,
+      item?.source,
+      article?.title,
+      article?.focus_keyword,
+      Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+      stripHtml(article?.content_html || "").slice(0, 1200),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (!routeText) return false;
+  const autoBrandMatches = countKeywordMatches(routeText, AUTO_BRAND_ROUTE_TERMS);
+  const autoDomainMatches = countKeywordMatches(routeText, AUTO_DOMAIN_ROUTE_TERMS);
+  return autoBrandMatches > 0 || autoDomainMatches >= 2;
 }
 
 function computeCategoryScores(item, article) {
@@ -1378,16 +1500,30 @@ function resolveCategoryId(item, article) {
 
   const specialRouteCategoryId = resolveSpecialCategoryRoute(item, article);
   if (specialRouteCategoryId && categoryById.has(specialRouteCategoryId)) {
+    const specialReason =
+      specialRouteCategoryId === 4061
+        ? "special_events_route"
+        : specialRouteCategoryId === 4780
+          ? "special_auto_route"
+          : "special_weather_route";
     return {
       categoryId: specialRouteCategoryId,
       changed: Number(item?.categoryId || 0) !== specialRouteCategoryId,
       scores: {},
-      reason:
-        specialRouteCategoryId === 4061 ? "special_events_route" : "special_weather_route",
+      reason: specialReason,
     };
   }
 
   const sourceCategoryId = Number(item?.categoryId || 0);
+  const autoDomainSignals = hasAutoDomainSignals(item, article);
+  if (sourceCategoryId === 4780 && !autoDomainSignals) {
+    return {
+      categoryId: 4063,
+      changed: true,
+      scores: {},
+      reason: "guard_source_auto_non_auto",
+    };
+  }
   const sourceCategoryKnown = categoryById.has(sourceCategoryId);
   const uncertainCategoryId = DEFAULT_UNCERTAIN_CATEGORY_ID;
   const fallbackCategoryId = sourceCategoryKnown ? sourceCategoryId : uncertainCategoryId;
@@ -1399,6 +1535,16 @@ function resolveCategoryId(item, article) {
     secondScore,
     currentScore,
   } = pickBestCategory(scores, fallbackCategoryId);
+
+  if (bestId === 4780 && !autoDomainSignals) {
+    const guardedCategoryId = fallbackCategoryId === 4780 ? 4063 : fallbackCategoryId;
+    return {
+      categoryId: guardedCategoryId,
+      changed: guardedCategoryId !== sourceCategoryId,
+      scores,
+      reason: "guard_non_auto_to_auto",
+    };
+  }
 
   if (!CATEGORY_OVERRIDE_ENABLED) {
     return {
