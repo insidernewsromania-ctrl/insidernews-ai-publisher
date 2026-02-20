@@ -1325,12 +1325,15 @@ function categoryNameById(categoryId) {
 }
 
 function countKeywordMatches(text, keywords = []) {
-  if (!text) return 0;
+  const haystack = normalizeText(text || "");
+  if (!haystack) return 0;
+  const paddedHaystack = ` ${haystack} `;
   let matches = 0;
   for (const keyword of keywords) {
     const term = normalizeText(keyword);
     if (!term) continue;
-    if (text.includes(term)) matches += 1;
+    const paddedTerm = ` ${term} `;
+    if (paddedHaystack.includes(paddedTerm)) matches += 1;
   }
   return matches;
 }
@@ -1516,17 +1519,13 @@ function resolveCategoryId(item, article) {
 
   const sourceCategoryId = Number(item?.categoryId || 0);
   const autoDomainSignals = hasAutoDomainSignals(item, article);
-  if (sourceCategoryId === 4780 && !autoDomainSignals) {
-    return {
-      categoryId: 4063,
-      changed: true,
-      scores: {},
-      reason: "guard_source_auto_non_auto",
-    };
-  }
-  const sourceCategoryKnown = categoryById.has(sourceCategoryId);
+  const sourceAutoButNotAutoDomain = sourceCategoryId === 4780 && !autoDomainSignals;
+  const effectiveSourceCategoryId = sourceAutoButNotAutoDomain ? 0 : sourceCategoryId;
+  const sourceCategoryKnown = categoryById.has(effectiveSourceCategoryId);
   const uncertainCategoryId = DEFAULT_UNCERTAIN_CATEGORY_ID;
-  const fallbackCategoryId = sourceCategoryKnown ? sourceCategoryId : uncertainCategoryId;
+  const fallbackCategoryId = sourceCategoryKnown
+    ? effectiveSourceCategoryId
+    : uncertainCategoryId;
 
   const { scores, scoreDetails } = computeCategoryScores(item, article);
   const {
@@ -1537,7 +1536,16 @@ function resolveCategoryId(item, article) {
   } = pickBestCategory(scores, fallbackCategoryId);
 
   if (bestId === 4780 && !autoDomainSignals) {
-    const guardedCategoryId = fallbackCategoryId === 4780 ? 4063 : fallbackCategoryId;
+    const nonAutoCandidates = categories
+      .filter(category => category.id !== 4780)
+      .map(category => ({
+        id: category.id,
+        score: Number(scores?.[category.id] || 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    const guardedCategoryId =
+      nonAutoCandidates[0]?.id ||
+      (fallbackCategoryId === 4780 ? 4063 : fallbackCategoryId);
     return {
       categoryId: guardedCategoryId,
       changed: guardedCategoryId !== sourceCategoryId,
