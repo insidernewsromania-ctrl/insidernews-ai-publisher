@@ -2367,8 +2367,21 @@ async function publishFromRssItem(item) {
     context: [item.title, item.source, item.link].filter(Boolean).join(" | "),
   });
   if (discoverTitle && discoverTitle !== article.title) {
-    article.title = discoverTitle;
-    article.seo_title = cleanTitle(discoverTitle, SEO_TITLE_MAX_CHARS);
+    if (NAME_FACT_CHECK_ENABLED) {
+      const discoverTitleMismatch = findNameMismatches(sourceFactText, discoverTitle);
+      if (hasNameMismatchIssues(discoverTitleMismatch)) {
+        console.log(
+          "Discover title rejected due name mismatch:",
+          formatNameMismatchSummary(discoverTitleMismatch)
+        );
+      } else {
+        article.title = discoverTitle;
+        article.seo_title = cleanTitle(discoverTitle, SEO_TITLE_MAX_CHARS);
+      }
+    } else {
+      article.title = discoverTitle;
+      article.seo_title = cleanTitle(discoverTitle, SEO_TITLE_MAX_CHARS);
+    }
   }
 
   article.content_html = sanitizeContent(article.content_html);
