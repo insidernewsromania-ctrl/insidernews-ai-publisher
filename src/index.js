@@ -20,9 +20,17 @@ import { isDuplicate, saveTopic } from "./history.js";
 import {
   buildRoleConstraintsFromClaims,
   extractPersonRoleClaims,
+  findNameMismatches,
   findRoleMismatches,
+  formatNameMismatchSummary,
   formatRoleMismatchSummary,
 } from "./facts.js";
+import {
+  buildLearningNotesForPrompt,
+  getCategoryLearningScores,
+  rememberCategoryOutcome,
+  rememberNameMismatchPair,
+} from "./learning.js";
 import {
   cleanTitle,
   hasEnigmaticTitleSignals,
@@ -40,9 +48,12 @@ import {
 
 const categories = [
   { name: "politica", id: 4058 },
+  { name: "stiri_locale", id: 4059 },
+  { name: "externe", id: 4060 },
+  { name: "evenimente", id: 4061 },
   { name: "social", id: 4063 },
   { name: "economie", id: 4064 },
-  { name: "externe", id: 4060 },
+  { name: "auto", id: 4780 },
 ];
 const categoryById = new Map(categories.map(category => [category.id, category]));
 
@@ -80,72 +91,30 @@ const CATEGORY_KEYWORDS = {
       "mandat",
     ],
   },
-  4063: {
+  4059: {
     strong: [
-      "educatie",
-      "scoala",
-      "elev",
-      "profesor",
-      "sanatate",
-      "spital",
-      "pacient",
-      "ghid",
-      "inot",
-      "inoate",
-      "invata",
-      "comunitate",
-      "accident",
-      "incendiu",
-      "cutremur",
+      "primaria",
+      "consiliul judetean",
+      "prefectura",
+      "judet",
+      "judetean",
+      "municipiu",
+      "oras",
+      "comuna",
+      "local",
+      "localitate",
     ],
     normal: [
-      "social",
-      "copii",
-      "familie",
-      "universitate",
-      "liceu",
-      "gradinita",
-      "trafic",
-      "meteo",
-      "vremea",
-      "transport public",
-      "consumator",
-      "sport",
-      "turism",
-      "cultura",
-      "societate",
-      "ajutor social",
-    ],
-  },
-  4064: {
-    strong: [
-      "economie",
-      "economic",
-      "business",
-      "afaceri",
-      "companie",
-      "investitie",
-      "profit",
-      "cifra de afaceri",
-      "bursa",
-      "fiscal",
-      "taxe",
-      "inflatie",
-    ],
-    normal: [
-      "banca",
-      "credit",
-      "impozit",
-      "piata",
-      "energie",
-      "industrie",
-      "financiar",
-      "salariu",
-      "cariera",
-      "antreprenor",
-      "startup",
-      "export",
-      "import",
+      "trafic local",
+      "drum judetean",
+      "strada",
+      "cartier",
+      "transport local",
+      "program local",
+      "eveniment local",
+      "administratie locala",
+      "autoritate locala",
+      "comunitate locala",
     ],
   },
   4060: {
@@ -180,6 +149,142 @@ const CATEGORY_KEYWORDS = {
       "diplomatic",
     ],
   },
+  4061: {
+    strong: [
+      "accident",
+      "incendiu",
+      "explozie",
+      "cutremur",
+      "avalanșa",
+      "avalanse",
+      "interventie",
+      "isu",
+      "smurd",
+      "victime",
+      "raniti",
+      "decedati",
+      "cod rosu",
+      "cod portocaliu",
+      "urgenta",
+    ],
+    normal: [
+      "coliziune",
+      "carambol",
+      "evacuare",
+      "deszapezire",
+      "fenomen extrem",
+      "furtuna",
+      "ploi torentiale",
+      "accident rutier",
+      "blocaj rutier",
+      "interventie pompieri",
+    ],
+  },
+  4063: {
+    strong: [
+      "educatie",
+      "scoala",
+      "elev",
+      "profesor",
+      "sanatate",
+      "spital",
+      "pacient",
+      "ghid",
+      "inot",
+      "inoate",
+      "invata",
+      "comunitate",
+      "societate",
+      "consumator",
+      "familie",
+    ],
+    normal: [
+      "social",
+      "copii",
+      "universitate",
+      "liceu",
+      "gradinita",
+      "trafic",
+      "meteo",
+      "vremea",
+      "transport public",
+      "consumator",
+      "sport",
+      "turism",
+      "cultura",
+      "ajutor social",
+    ],
+  },
+  4064: {
+    strong: [
+      "economie",
+      "economic",
+      "business",
+      "afaceri",
+      "companie",
+      "investitie",
+      "profit",
+      "cifra de afaceri",
+      "bursa",
+      "fiscal",
+      "taxe",
+      "inflatie",
+    ],
+    normal: [
+      "banca",
+      "credit",
+      "impozit",
+      "piata",
+      "energie",
+      "industrie",
+      "financiar",
+      "salariu",
+      "cariera",
+      "antreprenor",
+      "startup",
+      "export",
+      "import",
+    ],
+  },
+  4780: {
+    strong: [
+      "industria auto",
+      "producator auto",
+      "constructor auto",
+      "model auto",
+      "autoturism",
+      "autovehicul",
+      "electromobilitate",
+      "test drive",
+      "recall auto",
+      "masina electrica",
+      "motor termic",
+      "cutie automata",
+      "dacia",
+      "renault",
+      "tesla",
+      "bmw",
+      "audi",
+      "mercedes",
+      "ford",
+      "toyota",
+      "volkswagen",
+    ],
+    normal: [
+      "dealer auto",
+      "service auto",
+      "leasing auto",
+      "asigurare casco",
+      "anvelope",
+      "consum carburant",
+      "hybrid",
+      "vehicul electric",
+      "sedan",
+      "suv",
+      "hatchback",
+      "motorizare",
+    ],
+  },
 };
 
 const POLITICS_DECISIVE_TERMS = [
@@ -207,10 +312,95 @@ const SOCIAL_DECISIVE_TERMS = [
   "pacient",
   "comunitate",
   "familie",
-  "accident",
-  "incendiu",
-  "cutremur",
   "ghid",
+];
+
+const WEATHER_ROUTE_TERMS = [
+  "meteo",
+  "vreme",
+  "temperatura",
+  "canicula",
+  "furtuna",
+  "cod galben",
+  "cod portocaliu",
+  "cod rosu",
+  "ploi torentiale",
+  "ninsoare",
+  "polei",
+];
+
+const LOCAL_ROUTE_SIGNALS = [
+  "local",
+  "localitate",
+  "judet",
+  "judetean",
+  "municipiu",
+  "oras",
+  "comuna",
+  "sat",
+  "primarie",
+  "consiliul judetean",
+  "prefectura",
+];
+
+const EVENTS_ROUTE_TERMS = [
+  "accident",
+  "accident rutier",
+  "carambol",
+  "incendiu",
+  "explozie",
+  "cutremur",
+  "avalanse",
+  "interventie",
+  "isu",
+  "smurd",
+  "raniti",
+  "victime",
+  "decedati",
+  "evacuare",
+];
+
+const AUTO_BRAND_ROUTE_TERMS = [
+  "dacia",
+  "renault",
+  "tesla",
+  "bmw",
+  "audi",
+  "mercedes",
+  "ford",
+  "toyota",
+  "volkswagen",
+  "hyundai",
+  "kia",
+  "skoda",
+];
+
+const AUTO_DOMAIN_ROUTE_TERMS = [
+  "auto",
+  "autoturism",
+  "autovehicul",
+  "model auto",
+  "constructor auto",
+  "industria auto",
+  "recall auto",
+  "test drive",
+  "masina electrica",
+  "motorizare",
+  "consum carburant",
+  "leasing auto",
+];
+
+const TRAFFIC_OPERATIONAL_ROUTE_TERMS = [
+  "trafic",
+  "blocaj",
+  "ambuteiaj",
+  "coliziune",
+  "intersectie",
+  "circulatie",
+  "semafor",
+  "drum blocat",
+  "restrictii de trafic",
+  "inchidere trafic",
 ];
 
 function parsePositiveInt(value, fallback = 0) {
@@ -294,6 +484,7 @@ const ROLE_FACT_MAX_CLAIMS = parsePositiveInt(
   process.env.ROLE_FACT_MAX_CLAIMS || "6",
   6
 );
+const NAME_FACT_CHECK_ENABLED = process.env.NAME_FACT_CHECK_ENABLED !== "false";
 const WP_PUBLISH_RETRIES = parsePositiveInt(process.env.WP_PUBLISH_RETRIES || "3", 3);
 const WP_PUBLISH_RETRY_BASE_MS = parsePositiveInt(
   process.env.WP_PUBLISH_RETRY_BASE_MS || "2500",
@@ -924,29 +1115,72 @@ function categoryNameById(categoryId) {
 }
 
 function countKeywordMatches(text, keywords = []) {
-  if (!text) return 0;
+  const normalizedText = normalizeText(text || "");
+  if (!normalizedText) return 0;
+  const haystack = ` ${normalizedText} `;
   let matches = 0;
   for (const keyword of keywords) {
     const term = normalizeText(keyword);
     if (!term) continue;
-    if (text.includes(term)) matches += 1;
+    if (haystack.includes(` ${term} `)) matches += 1;
   }
   return matches;
 }
 
-function decisiveCategoryMatches(item, terms = []) {
-  const sourceText = normalizeText(
-    [item?.title, item?.content, item?.source].filter(Boolean).join(" ")
+function combinedCategoryRouteText(item, article) {
+  return [
+    item?.title,
+    item?.content,
+    item?.source,
+    article?.title,
+    article?.focus_keyword,
+    Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+    stripHtml(article?.content_html || "").slice(0, 900),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function hasAutoDomainSignals(item, article) {
+  const routeText = combinedCategoryRouteText(item, article);
+  const brandMatches = countKeywordMatches(routeText, AUTO_BRAND_ROUTE_TERMS);
+  const domainMatches = countKeywordMatches(routeText, AUTO_DOMAIN_ROUTE_TERMS);
+  return brandMatches >= 1 || domainMatches >= 2;
+}
+
+function resolveSpecialCategoryRoute(item, article) {
+  const routeText = combinedCategoryRouteText(item, article);
+  if (!routeText) return 0;
+
+  const eventsMatches = countKeywordMatches(routeText, EVENTS_ROUTE_TERMS);
+  if (eventsMatches >= 2) return 4061;
+
+  const weatherMatches = countKeywordMatches(routeText, WEATHER_ROUTE_TERMS);
+  if (weatherMatches >= 1) {
+    const localMatches = countKeywordMatches(routeText, LOCAL_ROUTE_SIGNALS);
+    return localMatches >= 1 ? 4059 : 4063;
+  }
+
+  if (hasAutoDomainSignals(item, article)) return 4780;
+
+  const trafficOperationalMatches = countKeywordMatches(
+    routeText,
+    TRAFFIC_OPERATIONAL_ROUTE_TERMS
   );
+  if (trafficOperationalMatches >= 2) return 4061;
+
+  return 0;
+}
+
+function decisiveCategoryMatches(item, terms = []) {
+  const sourceText = [item?.title, item?.content, item?.source].filter(Boolean).join(" ");
   return countKeywordMatches(sourceText, terms);
 }
 
 function computeCategoryScores(item, article) {
-  const sourceTitleText = normalizeText(item?.title || "");
-  const sourceBodyText = normalizeText(
-    [item?.content, item?.source].filter(Boolean).join(" ")
-  );
-  const generatedText = normalizeText(
+  const sourceTitleText = item?.title || "";
+  const sourceBodyText = [item?.content, item?.source].filter(Boolean).join(" ");
+  const generatedText =
     [
       article?.title,
       article?.focus_keyword,
@@ -954,7 +1188,11 @@ function computeCategoryScores(item, article) {
       stripHtml(article?.content_html || "").slice(0, 1200),
     ]
       .filter(Boolean)
-      .join(" ")
+      .join(" ");
+
+  const learningScores = getCategoryLearningScores(
+    [item?.title, item?.content, item?.source].filter(Boolean).join(" "),
+    categories.map(category => category.id)
   );
 
   const scores = {};
@@ -976,11 +1214,13 @@ function computeCategoryScores(item, article) {
       bodyStrongMatches * 4 +
       bodyNormalMatches * 2;
     const generatedSignal = generatedStrongMatches + generatedNormalMatches;
+    const learningSignal = Number(learningScores?.[category.id] || 0);
 
-    scores[category.id] = sourceSignal + generatedSignal;
+    scores[category.id] = sourceSignal + generatedSignal + learningSignal;
     scoreDetails[category.id] = {
       sourceSignal,
       generatedSignal,
+      learningSignal,
       titleStrongMatches,
       titleNormalMatches,
       bodyStrongMatches,
@@ -1025,19 +1265,35 @@ function pickBestCategory(scores, fallbackCategoryId) {
 }
 
 function resolveCategoryId(item, article) {
+  const sourceCategoryId = Number(item?.categoryId || 0);
+
   if (FORCE_CATEGORY_ID > 0) {
     return {
       categoryId: FORCE_CATEGORY_ID,
-      changed: Number(item?.categoryId || 0) !== FORCE_CATEGORY_ID,
+      changed: sourceCategoryId !== FORCE_CATEGORY_ID,
       scores: {},
       reason: "forced_category",
     };
   }
 
-  const sourceCategoryId = Number(item?.categoryId || 0);
-  const sourceCategoryKnown = categoryById.has(sourceCategoryId);
+  const specialRouteCategoryId = resolveSpecialCategoryRoute(item, article);
+  if (specialRouteCategoryId && categoryById.has(specialRouteCategoryId)) {
+    return {
+      categoryId: specialRouteCategoryId,
+      changed: specialRouteCategoryId !== sourceCategoryId,
+      scores: {},
+      reason: "special_route",
+    };
+  }
+
+  const autoDomainSignals = hasAutoDomainSignals(item, article);
+  const sourceAutoButNotAutoDomain = sourceCategoryId === 4780 && !autoDomainSignals;
+  const effectiveSourceCategoryId = sourceAutoButNotAutoDomain ? 0 : sourceCategoryId;
+  const sourceCategoryKnown = categoryById.has(effectiveSourceCategoryId);
   const uncertainCategoryId = DEFAULT_UNCERTAIN_CATEGORY_ID;
-  const fallbackCategoryId = sourceCategoryKnown ? sourceCategoryId : uncertainCategoryId;
+  const fallbackCategoryId = sourceCategoryKnown
+    ? effectiveSourceCategoryId
+    : uncertainCategoryId;
 
   const { scores, scoreDetails } = computeCategoryScores(item, article);
   const {
@@ -1050,7 +1306,7 @@ function resolveCategoryId(item, article) {
   if (!CATEGORY_OVERRIDE_ENABLED) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "override_disabled",
     };
@@ -1058,11 +1314,29 @@ function resolveCategoryId(item, article) {
 
   const bestSourceSignal = Number(scoreDetails?.[bestId]?.sourceSignal || 0);
 
+  if (bestId === 4780 && !autoDomainSignals) {
+    const nonAutoCandidates = categories
+      .filter(category => category.id !== 4780)
+      .map(category => ({
+        id: category.id,
+        score: Number(scores?.[category.id] || 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    const guardedCategoryId =
+      nonAutoCandidates[0]?.id || (fallbackCategoryId === 4780 ? 4063 : fallbackCategoryId);
+    return {
+      categoryId: guardedCategoryId,
+      changed: guardedCategoryId !== sourceCategoryId,
+      scores,
+      reason: "guard_non_auto_to_auto",
+    };
+  }
+
   if (!sourceCategoryKnown) {
     if (bestScore < CATEGORY_MIN_SCORE) {
       return {
         categoryId: fallbackCategoryId,
-        changed: false,
+        changed: fallbackCategoryId !== sourceCategoryId,
         scores,
         reason: "unknown_source_below_min_score",
       };
@@ -1070,7 +1344,7 @@ function resolveCategoryId(item, article) {
     if (bestSourceSignal < CATEGORY_MIN_SOURCE_SIGNAL) {
       return {
         categoryId: fallbackCategoryId,
-        changed: false,
+        changed: fallbackCategoryId !== sourceCategoryId,
         scores,
         reason: "unknown_source_low_source_signal",
       };
@@ -1078,7 +1352,7 @@ function resolveCategoryId(item, article) {
     if (bestScore < secondScore + CATEGORY_SECOND_BEST_MARGIN) {
       return {
         categoryId: fallbackCategoryId,
-        changed: false,
+        changed: fallbackCategoryId !== sourceCategoryId,
         scores,
         reason: "unknown_source_low_confidence",
       };
@@ -1094,7 +1368,7 @@ function resolveCategoryId(item, article) {
   if (bestId === fallbackCategoryId) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "same_as_source",
     };
@@ -1103,7 +1377,7 @@ function resolveCategoryId(item, article) {
   if (bestScore < CATEGORY_MIN_SCORE) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "below_min_score",
     };
@@ -1112,7 +1386,7 @@ function resolveCategoryId(item, article) {
   if (bestSourceSignal < CATEGORY_MIN_SOURCE_SIGNAL) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "low_source_signal",
     };
@@ -1121,7 +1395,7 @@ function resolveCategoryId(item, article) {
   if (bestScore < currentScore + CATEGORY_OVERRIDE_MARGIN) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "insufficient_margin",
     };
@@ -1130,7 +1404,7 @@ function resolveCategoryId(item, article) {
   if (bestScore < secondScore + CATEGORY_SECOND_BEST_MARGIN) {
     return {
       categoryId: fallbackCategoryId,
-      changed: false,
+      changed: fallbackCategoryId !== sourceCategoryId,
       scores,
       reason: "too_close_to_second_best",
     };
@@ -1141,7 +1415,7 @@ function resolveCategoryId(item, article) {
     if (decisiveMatches < 2) {
       return {
         categoryId: fallbackCategoryId,
-        changed: false,
+        changed: fallbackCategoryId !== sourceCategoryId,
         scores,
         reason: "guard_social_to_politics",
       };
@@ -1153,7 +1427,7 @@ function resolveCategoryId(item, article) {
     if (decisiveMatches < 2) {
       return {
         categoryId: fallbackCategoryId,
-        changed: false,
+        changed: fallbackCategoryId !== sourceCategoryId,
         scores,
         reason: "guard_politics_to_social",
       };
@@ -1172,12 +1446,21 @@ function buildSourceRoleClaims(item) {
   const claimsFromTitle = extractPersonRoleClaims(item?.title || "", {
     maxClaims: ROLE_FACT_MAX_CLAIMS,
   });
-  if (claimsFromTitle.size > 0) return claimsFromTitle;
-
-  const fallbackText = `${item?.title || ""}\n${item?.content || ""}`.trim();
-  return extractPersonRoleClaims(fallbackText, {
+  const claimsFromBody = extractPersonRoleClaims(item?.content || "", {
     maxClaims: ROLE_FACT_MAX_CLAIMS,
   });
+
+  const merged = new Map();
+  for (const sourceClaims of [claimsFromTitle, claimsFromBody]) {
+    for (const [nameKey, claim] of sourceClaims.entries()) {
+      const current = merged.get(nameKey) || { name: claim.name, roles: new Set() };
+      for (const role of claim.roles) current.roles.add(role);
+      merged.set(nameKey, current);
+      if (merged.size >= ROLE_FACT_MAX_CLAIMS) break;
+    }
+    if (merged.size >= ROLE_FACT_MAX_CLAIMS) break;
+  }
+  return merged;
 }
 
 function roleMismatchSummary(item, article, sourceClaims) {
@@ -1188,6 +1471,46 @@ function roleMismatchSummary(item, article, sourceClaims) {
     article?.content_html || ""
   ).slice(0, 2500)}`;
   return findRoleMismatches(sourceClaims, generatedText);
+}
+
+function articleFactText(article) {
+  return `${article?.title || ""}\n${stripHtml(article?.content_html || "").slice(0, 2800)}`;
+}
+
+function hasNameMismatchIssues(report) {
+  const altered = Array.isArray(report?.altered) ? report.altered : [];
+  const invented = Array.isArray(report?.invented) ? report.invented : [];
+  return altered.length > 0 || invented.length > 0;
+}
+
+function rememberNameMismatchReport(report) {
+  const altered = Array.isArray(report?.altered) ? report.altered : [];
+  for (const item of altered) {
+    const expectedNames = Array.isArray(item?.expected) ? item.expected : [];
+    for (const expectedName of expectedNames) {
+      rememberNameMismatchPair(expectedName, item?.found || "");
+    }
+  }
+}
+
+function learningNotesWithNameMismatches(baseNotes, report) {
+  const lines = [];
+  if (baseNotes) lines.push(baseNotes);
+
+  const altered = Array.isArray(report?.altered) ? report.altered : [];
+  const invented = Array.isArray(report?.invented) ? report.invented : [];
+
+  for (const mismatch of altered.slice(0, 4)) {
+    const expected = Array.isArray(mismatch?.expected) ? mismatch.expected.join("/") : "";
+    if (!mismatch?.found || !expected) continue;
+    lines.push(`- Nu confunda «${expected}» cu «${mismatch.found}». Foloseste strict numele din sursa.`);
+  }
+  for (const mismatch of invented.slice(0, 2)) {
+    if (!mismatch?.found) continue;
+    lines.push(`- Numele «${mismatch.found}» nu exista in sursa. Elimina acest nume.`);
+  }
+
+  return lines.join("\n");
 }
 
 function containsNormalized(haystack, needle) {
@@ -1242,12 +1565,7 @@ function isLowEditorialValueTitle(title) {
 }
 
 function containsAnyTerm(normalizedText, terms = []) {
-  if (!normalizedText) return false;
-  for (const term of terms) {
-    if (!term) continue;
-    if (normalizedText.includes(term)) return true;
-  }
-  return false;
+  return countKeywordMatches(normalizedText || "", terms) > 0;
 }
 
 function isLikelyMediaOutletPromotionText(text) {
@@ -1931,6 +2249,8 @@ async function publishFromRssItem(item) {
       `GPT input trimmed: ${gptInput.originalLength} -> ${gptInput.text.length} chars`
     );
   }
+  const sourceFactText = gptInput.text;
+  const learnedPromptNotes = buildLearningNotesForPrompt(sourceFactText);
   const sourceRoleClaims = ROLE_FACT_CHECK_ENABLED
     ? buildSourceRoleClaims(item)
     : new Map();
@@ -1943,6 +2263,7 @@ async function publishFromRssItem(item) {
     link: item.link,
     roleConstraints,
     promptMode,
+    learningNotes: learnedPromptNotes,
   });
 
   if (!article) return finish(false);
@@ -1956,6 +2277,7 @@ async function publishFromRssItem(item) {
       roleConstraints,
       promptMode,
       strictStyleMode: true,
+      learningNotes: learnedPromptNotes,
     });
     if (!article) return finish(false);
   }
@@ -1974,6 +2296,7 @@ async function publishFromRssItem(item) {
         roleConstraints,
         promptMode,
         strictRoleMode: true,
+        learningNotes: learnedPromptNotes,
       });
       if (!article) return finish(false);
 
@@ -1982,6 +2305,40 @@ async function publishFromRssItem(item) {
         console.log(
           "Role mismatch persists. Skipping article:",
           formatRoleMismatchSummary(mismatches)
+        );
+        return finish(false);
+      }
+    }
+  }
+
+  if (NAME_FACT_CHECK_ENABLED) {
+    let nameMismatchReport = findNameMismatches(sourceFactText, articleFactText(article));
+    if (hasNameMismatchIssues(nameMismatchReport)) {
+      rememberNameMismatchReport(nameMismatchReport);
+      console.log(
+        "Name mismatch detected, retrying strict name mode:",
+        formatNameMismatchSummary(nameMismatchReport)
+      );
+      article = await rewriteNews(gptInput.text, item.title, {
+        publishedAt: item.publishedAt,
+        source: item.source,
+        link: item.link,
+        roleConstraints,
+        promptMode,
+        strictNameMode: true,
+        learningNotes: learningNotesWithNameMismatches(
+          learnedPromptNotes,
+          nameMismatchReport
+        ),
+      });
+      if (!article) return finish(false);
+
+      nameMismatchReport = findNameMismatches(sourceFactText, articleFactText(article));
+      if (hasNameMismatchIssues(nameMismatchReport)) {
+        rememberNameMismatchReport(nameMismatchReport);
+        console.log(
+          "Name mismatch persists. Skipping article:",
+          formatNameMismatchSummary(nameMismatchReport)
         );
         return finish(false);
       }
@@ -2096,6 +2453,20 @@ async function publishFromRssItem(item) {
   }
 
   const published = await tryPublishArticle(article, targetCategoryId, item.link, item.title, item);
+  if (published) {
+    rememberCategoryOutcome({
+      categoryId: targetCategoryId,
+      sourceText: [
+        item?.title,
+        item?.content,
+        article?.title,
+        article?.focus_keyword,
+        Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    });
+  }
   return finish(published);
 }
 
@@ -2165,7 +2536,20 @@ async function publishFallbackArticle() {
     }
 
     const success = await tryPublishArticle(article, targetCategoryId, null, article.title);
-    if (success) return true;
+    if (success) {
+      rememberCategoryOutcome({
+        categoryId: targetCategoryId,
+        sourceText: [
+          article?.title,
+          article?.focus_keyword,
+          Array.isArray(article?.tags) ? article.tags.join(" ") : "",
+          stripHtml(article?.content_html || "").slice(0, 1200),
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+      return true;
+    }
   }
 
   return false;

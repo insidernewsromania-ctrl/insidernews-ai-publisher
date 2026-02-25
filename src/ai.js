@@ -93,6 +93,9 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
   const roleConstraints = (meta?.roleConstraints || "")
     .toString()
     .trim() || "- Pastreaza functiile oficiale exact asa cum apar in sursa.";
+  const learningNotes = (meta?.learningNotes || "")
+    .toString()
+    .trim() || "- Nu modifica numele persoanelor; foloseste exact formele din sursa.";
 
   const base = rewritePromptTemplate(meta?.promptMode)
     .replace("{{TITLE}}", originalTitle || "")
@@ -101,6 +104,7 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
     .replace("{{SOURCE}}", meta?.source || "")
     .replace("{{LINK}}", meta?.link || "")
     .replace("{{ROLE_CONSTRAINTS}}", roleConstraints)
+    .replace("{{LEARNING_NOTES}}", learningNotes)
     .replace("{{MIN_WORDS}}", String(MIN_WORDS));
 
   if (
@@ -119,6 +123,13 @@ function buildPrompt(rawContent, originalTitle, meta, attempt) {
 - Exista risc de confuzie intre functiile oficiale (ex: premier vs primar).
 - Verifica explicit fiecare persoana mentionata si pastreaza functia corecta din sursa.
 - Daca nu esti sigur, elimina functia si pastreaza doar numele.`);
+  }
+
+  if (meta?.strictNameMode) {
+    extraRules.push(`ATENTIE CRITICA PE NUME:
+- Foloseste STRICT aceleasi nume de persoane ca in sursa, fara inlocuiri de prenume.
+- Nu adauga nume noi si nu completa din memorie externa.
+- Daca un nume nu este clar in sursa, nu il forta; reformuleaza fara a inventa.`);
   }
 
   if (meta?.strictStyleMode) {
@@ -200,7 +211,7 @@ export async function rewriteNews(rawContent, originalTitle, meta = {}) {
           {
             role: "system",
             content:
-              "Esti un jurnalist profesionist, riguros factual, precis si clar. Evita cliseele, repetiile si limbajul promotional despre alte publicatii.",
+              "Esti un jurnalist profesionist, riguros factual, precis si clar. Evita cliseele, repetiile si limbajul promotional despre alte publicatii. Pastreaza tonul respectuos pentru persoane publice.",
           },
           {
             role: "user",

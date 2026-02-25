@@ -9,6 +9,8 @@ REGULI OBLIGATORII:
 - Fără citarea sursei sau a altor publicații.
 - Fără formulări de tip „potrivit surselor”.
 - Nu transforma articolul intr-o promovare pentru alte publicatii, pagini, canale sau emisiuni media.
+- Păstrează fidel informațiile din sursă: nume, funcții, date, cifre, citate.
+- Nu inventa persoane, instituții, funcții, citate sau context care nu există în sursă.
 - Minim {{MIN_WORDS}} de cuvinte.
 - Fără secțiune intitulată „Concluzie”.
 - Ton profesionist, informativ, fără senzaționalism.
@@ -39,8 +41,14 @@ SEO:
 
 CONSISTENȚĂ FACTUALĂ (OBLIGATORIU):
 {{ROLE_CONSTRAINTS}}
+- Păstrează EXACT numele complete ale persoanelor din sursă (nu schimba prenumele, inițialele sau ordinea numelui).
 - Nu schimba funcțiile oficiale ale persoanelor.
 - Dacă funcția nu este clară, menționează doar numele, fără funcție.
+- Pentru demnitari, oficiali și personalități publice, păstrează o formulare respectuoasă și neutră.
+- Evită formulări depreciative, ironice sau colocviale când te referi la persoane publice.
+
+LECTII DIN ERORI ANTERIOARE (aplica daca exista):
+{{LEARNING_NOTES}}
 
 Returnează STRICT JSON (fără markdown):
 {

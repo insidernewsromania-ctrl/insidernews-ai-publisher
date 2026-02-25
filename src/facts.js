@@ -1,6 +1,6 @@
 import { normalizeText, stripHtml } from "./utils.js";
 
-const ROLE_PATTERN = String.raw`(?:prim[-\s]?ministr(?:ul|ului)?|premier(?:ul|ului)?|primar(?:ul|ului)?|pre(?:ș|s)edinte(?:le|lui)?|ministr(?:ul|ului|u)?|senator(?:ul|ului)?|deputat(?:ul|ului)?|judec[aă]tor(?:ul|ului)?|guvernator(?:ul|ului)?|procuror(?:ul|ului)?|avocat(?:ul|ului|a)?|director(?:ul|ului)?)`;
+const ROLE_PATTERN = String.raw`(?:prim[-\s]?ministr(?:ul|ului)?|vicepremier(?:ul|ului)?|premier(?:ul|ului)?|primar(?:ul|ului)?|pre(?:ș|s)edinte(?:le|lui)?|ministr(?:ul|ului|u)?|secretar(?:ul|ului)?\s+de\s+stat|senator(?:ul|ului)?|deputat(?:ul|ului)?|europarlamentar(?:ul|ului)?|judec[aă]tor(?:ul|ului)?|guvernator(?:ul|ului)?|procuror(?:ul|ului)?|prefect(?:ul|ului)?|avocat(?:ul|ului|a)?|director(?:ul|ului)?|purt[aă]tor(?:ul|ului)?\s+de\s+cuv[aâ]nt)`;
 const NAME_PATTERN = String.raw`[A-ZĂÂÎȘȚ][\p{L}'’\-]+(?:\s+[A-ZĂÂÎȘȚ][\p{L}'’\-]+){1,2}`;
 
 const ROLE_THEN_NAME_REGEX = new RegExp(
@@ -149,4 +149,178 @@ export function formatRoleMismatchSummary(mismatches) {
     .slice(0, 4)
     .map(item => `${item.name}: ${item.found} (expected ${item.expected.join("/")})`)
     .join("; ");
+}
+
+const PERSON_NAME_REGEX = new RegExp(
+  String.raw`\b([A-ZĂÂÎȘȚ][\p{L}'’\-]{1,30}\s+[A-ZĂÂÎȘȚ][\p{L}'’\-]{1,30}(?:\s+[A-ZĂÂÎȘȚ][\p{L}'’\-]{1,30})?)\b`,
+  "gu"
+);
+
+const NON_PERSON_NAME_TOKENS = new Set(
+  [
+    "romania",
+    "romaniei",
+    "guvernul",
+    "guvernului",
+    "premierul",
+    "presedintele",
+    "primarul",
+    "domnul",
+    "doamna",
+    "ministrul",
+    "senatorul",
+    "deputatul",
+    "ministerul",
+    "ministerului",
+    "sanatatii",
+    "educatiei",
+    "economiei",
+    "parlamentul",
+    "senatul",
+    "camera",
+    "deputatilor",
+    "curtea",
+    "constitutionala",
+    "consiliul",
+    "judetean",
+    "primaria",
+    "prefectura",
+    "ue",
+    "nato",
+    "sua",
+    "ucraina",
+    "rusia",
+    "uniunea",
+    "europeana",
+    "comisia",
+    "europeana",
+    "politia",
+    "romana",
+    "inspectoratul",
+    "spitalul",
+    "universitatea",
+    "google",
+    "news",
+    "digi24",
+    "mediafax",
+    "g4media",
+    "hotnews",
+  ].map(token => normalizeText(token))
+);
+
+function splitNameParts(name) {
+  return `${name || ""}`
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+}
+
+function normalizeNameKey(name) {
+  return normalizeText(name || "").replace(/\s+/g, " ").trim();
+}
+
+function lastNameKey(name) {
+  const parts = splitNameParts(name).map(part => normalizeText(part));
+  return parts[parts.length - 1] || "";
+}
+
+function looksLikeInstitutionName(name) {
+  const tokens = splitNameParts(name).map(part => normalizeText(part));
+  if (tokens.length < 2 || tokens.length > 3) return true;
+  if (tokens.some(token => !token || token.length < 2)) return true;
+  if (tokens.some(token => NON_PERSON_NAME_TOKENS.has(token))) return true;
+  return false;
+}
+
+function extractPersonNames(text, options = {}) {
+  const maxNamesRaw = Number(options.maxNames || 24);
+  const maxNames = Number.isFinite(maxNamesRaw)
+    ? Math.max(1, Math.floor(maxNamesRaw))
+    : 24;
+  const cleanText = stripHtml(text || "").replace(/\s+/g, " ").trim();
+  const names = new Map();
+  if (!cleanText) return names;
+
+  for (const match of cleanText.matchAll(PERSON_NAME_REGEX)) {
+    const candidate = cleanName(match[1]);
+    if (!looksLikePersonName(candidate)) continue;
+    if (looksLikeInstitutionName(candidate)) continue;
+    const key = normalizeNameKey(candidate);
+    if (!key || names.has(key)) continue;
+    names.set(key, candidate);
+    if (names.size >= maxNames) break;
+  }
+  return names;
+}
+
+export function findNameMismatches(sourceText, generatedText, options = {}) {
+  const sourceNames = extractPersonNames(sourceText, {
+    maxNames: options.maxNames || 26,
+  });
+  const generatedNames = extractPersonNames(generatedText, {
+    maxNames: options.maxNames || 30,
+  });
+
+  if (sourceNames.size === 0 || generatedNames.size === 0) {
+    return {
+      altered: [],
+      invented: [],
+      sourceNames: [...sourceNames.values()],
+      generatedNames: [...generatedNames.values()],
+    };
+  }
+
+  const sourceByLastName = new Map();
+  for (const sourceName of sourceNames.values()) {
+    const surname = lastNameKey(sourceName);
+    if (!surname) continue;
+    const current = sourceByLastName.get(surname) || new Set();
+    current.add(sourceName);
+    sourceByLastName.set(surname, current);
+  }
+
+  const altered = [];
+  const invented = [];
+  for (const [generatedKey, generatedName] of generatedNames.entries()) {
+    if (sourceNames.has(generatedKey)) continue;
+
+    const generatedSurname = lastNameKey(generatedName);
+    const expectedBySurname = sourceByLastName.get(generatedSurname);
+
+    if (expectedBySurname && expectedBySurname.size > 0) {
+      altered.push({
+        found: generatedName,
+        expected: [...expectedBySurname],
+      });
+    } else {
+      invented.push({
+        found: generatedName,
+      });
+    }
+  }
+
+  return {
+    altered,
+    invented,
+    sourceNames: [...sourceNames.values()],
+    generatedNames: [...generatedNames.values()],
+  };
+}
+
+export function formatNameMismatchSummary(report) {
+  const altered = Array.isArray(report?.altered) ? report.altered : [];
+  const invented = Array.isArray(report?.invented) ? report.invented : [];
+  const details = [];
+
+  for (const item of altered.slice(0, 3)) {
+    const expected = Array.isArray(item?.expected) ? item.expected.join("/") : "";
+    details.push(`${item?.found || "nume necunoscut"} (expected ${expected || "n/a"})`);
+  }
+
+  for (const item of invented.slice(0, 2)) {
+    details.push(`${item?.found || "nume necunoscut"} (not in source)`);
+  }
+
+  return details.join("; ");
 }
